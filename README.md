@@ -39,9 +39,9 @@ what a page points to or crawling site structure.
 ## Install
 
 ```sh
-dsh plugin add github:TYEclipse/dsh-webfetch
+dsh plugin --profile web add github:TYEclipse/dsh-webfetch
 # or a pinned release:
-dsh plugin add github:TYEclipse/dsh-webfetch#v0.1.0
+dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.1.0
 ```
 
 Restart your agent session and the tools are available to the model.
