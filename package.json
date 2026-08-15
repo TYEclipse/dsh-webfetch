@@ -7,11 +7,13 @@
   "types": "dist/index.d.ts",
   "files": [
     "dist",
+    "cordis.patch.yml",
     "README.md",
     "README.zh.md",
     "LICENSE"
   ],
   "scripts": {
+    "prepare": "tsc -p tsconfig.json",
     "build": "tsc -p tsconfig.json",
     "test": "vitest run",
     "lint": "oxlint src test"
@@ -39,7 +41,9 @@
     "node": ">=20"
   },
   "dsh": {
-    "plugin": true
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
   },
   "peerDependencies": {
     "@deepseek-ai/cordis": "^4.0.1",

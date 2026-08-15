@@ -1,0 +1,5 @@
+# dsh-webfetch bundle patch: mounts this plugin into the profile as one layer row.
+# Configuration defaults live in the plugin schema (Config export).
+- insert:
+    - id: webfetch
+      name: dsh-webfetch
