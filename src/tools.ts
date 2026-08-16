@@ -87,7 +87,7 @@ export function buildWebfetchTools(config: ResolvedConfig): ToolSet {
       const { fetched, page } = await readPage(args.url, config, maxChars, args.format ?? 'markdown', args.extractLinks ?? false)
       const links = (args.extractLinks ?? false)
         ? page.links.map((link) => ({ text: link.text, href: resolveHref(link.href, fetched.finalUrl) })).filter((link) => link.href !== '')
-        : undefined
+        : []
       return {
         url: args.url,
         finalUrl: fetched.finalUrl,
