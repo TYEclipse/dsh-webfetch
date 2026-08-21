@@ -22,6 +22,7 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type { Agent } from '@deepseek-ai/dsh-agent'
 import z from '@deepseek-ai/schemastery'
+import { resolveProxyConf, type ProxyConf } from './proxy.ts'
 import { buildWebfetchTools, type ToolSet } from './tools.ts'
 
 /** Stable Cordis plugin name (also the config key under `plugins:`). */
@@ -42,6 +43,12 @@ export interface Config {
   maxRedirects?: number
   /** User-Agent header value. */
   userAgent?: string
+  /** http proxy URL (http://host:port); empty string disables; default: HTTP_PROXY env. */
+  httpProxy?: string
+  /** https proxy URL; empty string disables; default: HTTPS_PROXY env. */
+  httpsProxy?: string
+  /** NO_PROXY bypass list; default: NO_PROXY env. */
+  noProxy?: string
 }
 
 export const Config: z<Config> = z.object({
@@ -50,6 +57,9 @@ export const Config: z<Config> = z.object({
   maxChars: z.number().min(1_000).max(200_000).default(50_000),
   maxRedirects: z.number().step(1).min(0).max(10).default(3),
   userAgent: z.string().max(200).default('dsh-webfetch/0.2 (DeepSeek Harness plugin)'),
+  httpProxy: z.string().max(500),
+  httpsProxy: z.string().max(500),
+  noProxy: z.string().max(2000),
 })
 
 /** Config with every default resolved (all fields guaranteed). */
@@ -59,16 +69,18 @@ export interface ResolvedConfig {
   maxChars: number
   maxRedirects: number
   userAgent: string
+  proxy: ProxyConf
 }
 
 /** Resolve loader config into the effective runtime config. */
-export function resolveConfig(config: Config): ResolvedConfig {
+export function resolveConfig(config: Config, env: Record<string, string | undefined> = process.env): ResolvedConfig {
   return {
     timeoutMs: config.timeoutMs ?? 10_000,
     maxBytes: config.maxBytes ?? 1_500_000,
     maxChars: config.maxChars ?? 50_000,
     maxRedirects: config.maxRedirects ?? 3,
     userAgent: config.userAgent ?? 'dsh-webfetch/0.2 (DeepSeek Harness plugin)',
+    proxy: resolveProxyConf(env, { httpProxy: config.httpProxy, httpsProxy: config.httpsProxy, noProxy: config.noProxy }),
   }
 }
 

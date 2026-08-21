@@ -16,6 +16,7 @@ const config = {
   maxBytes: 100_000,
   maxRedirects: 3,
   userAgent: 'dsh-webfetch-test/0.1',
+  proxy: { httpProxy: '', httpsProxy: '', noProxy: '' },
 }
 
 beforeAll(async () => {

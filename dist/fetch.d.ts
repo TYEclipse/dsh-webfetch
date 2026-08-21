@@ -3,11 +3,16 @@
  * redirects (http/https only), caps the response size, detects the charset
  * and returns the decoded document.
  *
- * Uses the global fetch (Node >= 20). No credentials, cookies or custom
- * headers are ever attached, and credentials embedded in URLs are rejected.
+ * Direct requests use the global fetch (Node >= 20); when an http proxy is
+ * configured (explicitly or via HTTP_PROXY/HTTPS_PROXY env) and the target is
+ * not excluded by NO_PROXY, a zero-dependency proxy transport is used instead
+ * (see proxy.ts). No credentials, cookies or custom headers are ever
+ * attached beyond a plain user-agent, and credentials embedded in URLs are
+ * rejected.
  *
  * @module dsh-webfetch/fetch
  */
+import { type ProxyConf } from './proxy.ts';
 /** Runtime configuration used by the HTTP layer. */
 export interface FetchConfig {
     /** Per-request timeout in ms. */
@@ -18,6 +23,8 @@ export interface FetchConfig {
     maxRedirects: number;
     /** User-Agent header value. */
     userAgent: string;
+    /** Proxy selection configuration ('' = connect directly). */
+    proxy: ProxyConf;
 }
 /** A validated http/https URL string. */
 export declare function assertHttpUrl(input: string): string;

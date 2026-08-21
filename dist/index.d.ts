@@ -20,6 +20,7 @@
  */
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
+import { type ProxyConf } from './proxy.ts';
 /** Stable Cordis plugin name (also the config key under `plugins:`). */
 export declare const name = "dsh-webfetch";
 /** Services required before tool registration can start. */
@@ -36,6 +37,12 @@ export interface Config {
     maxRedirects?: number;
     /** User-Agent header value. */
     userAgent?: string;
+    /** http proxy URL (http://host:port); empty string disables; default: HTTP_PROXY env. */
+    httpProxy?: string;
+    /** https proxy URL; empty string disables; default: HTTPS_PROXY env. */
+    httpsProxy?: string;
+    /** NO_PROXY bypass list; default: NO_PROXY env. */
+    noProxy?: string;
 }
 export declare const Config: z<Config>;
 /** Config with every default resolved (all fields guaranteed). */
@@ -45,9 +52,10 @@ export interface ResolvedConfig {
     maxChars: number;
     maxRedirects: number;
     userAgent: string;
+    proxy: ProxyConf;
 }
 /** Resolve loader config into the effective runtime config. */
-export declare function resolveConfig(config: Config): ResolvedConfig;
+export declare function resolveConfig(config: Config, env?: Record<string, string | undefined>): ResolvedConfig;
 /** Mount the web tools on every live agent and every future one. */
 export declare function apply(ctx: Context, config: Config): void;
 //# sourceMappingURL=index.d.ts.map

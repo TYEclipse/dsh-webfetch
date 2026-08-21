@@ -19,6 +19,7 @@
  * @module dsh-webfetch
  */
 import z from '@deepseek-ai/schemastery';
+import { resolveProxyConf } from "./proxy.js";
 import { buildWebfetchTools } from "./tools.js";
 /** Stable Cordis plugin name (also the config key under `plugins:`). */
 export const name = 'dsh-webfetch';
@@ -30,15 +31,19 @@ export const Config = z.object({
     maxChars: z.number().min(1_000).max(200_000).default(50_000),
     maxRedirects: z.number().step(1).min(0).max(10).default(3),
     userAgent: z.string().max(200).default('dsh-webfetch/0.2 (DeepSeek Harness plugin)'),
+    httpProxy: z.string().max(500),
+    httpsProxy: z.string().max(500),
+    noProxy: z.string().max(2000),
 });
 /** Resolve loader config into the effective runtime config. */
-export function resolveConfig(config) {
+export function resolveConfig(config, env = process.env) {
     return {
         timeoutMs: config.timeoutMs ?? 10_000,
         maxBytes: config.maxBytes ?? 1_500_000,
         maxChars: config.maxChars ?? 50_000,
         maxRedirects: config.maxRedirects ?? 3,
         userAgent: config.userAgent ?? 'dsh-webfetch/0.2 (DeepSeek Harness plugin)',
+        proxy: resolveProxyConf(env, { httpProxy: config.httpProxy, httpsProxy: config.httpsProxy, noProxy: config.noProxy }),
     };
 }
 /** Register both web tools on one agent; returns the disposer. */
