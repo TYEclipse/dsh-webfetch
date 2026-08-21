@@ -11,6 +11,16 @@ import type { ResolvedConfig } from './index.ts';
 export interface ToolSet {
     web_fetch: ToolDefinition;
     web_links: ToolDefinition;
+    web_feed: ToolDefinition;
+}
+/** One entry of a web_feed result (optional fields only present when known). */
+export interface FeedItem {
+    title: string;
+    url: string;
+    published?: string;
+    author?: string;
+    summary?: string;
+    content?: string;
 }
 /** Build the two web tool definitions from the resolved config. */
 export declare function buildWebfetchTools(config: ResolvedConfig): ToolSet;

@@ -50,14 +50,16 @@ export interface FetchedPage {
   truncated: boolean
 }
 
-/** Detect the charset: Content-Type header first, then <meta charset> sniffing. */
+/** Detect the charset: Content-Type header, then XML declaration / <meta> sniffing. */
 function detectCharset(headers: Headers, bodyBuffer: Buffer): string {
   const header = headers.get('content-type') ?? ''
   const headerMatch = /charset\s*=\s*["']?([a-zA-Z0-9._-]+)/i.exec(header)
   if (headerMatch?.[1] !== undefined) return headerMatch[1]
 
-  // Only sniff the first 2 KB of the document for meta declarations.
+  // Only sniff the first 2 KB of the document for declaration or meta tags.
   const head = bodyBuffer.subarray(0, 2048).toString('latin1')
+  const xmlMatch = /<\?xml[^>]+encoding\s*=\s*["']([a-zA-Z0-9._-]+)/i.exec(head)
+  if (xmlMatch?.[1] !== undefined) return xmlMatch[1]
   const metaMatch = /<meta[^>]+charset\s*=\s*["']?([a-zA-Z0-9._-]+)/i.exec(head)
     ?? /<meta[^>]+content\s*=\s*["'][^"']*charset\s*=\s*([a-zA-Z0-9._-]+)/i.exec(head)
   return metaMatch?.[1] ?? 'utf-8'
@@ -73,12 +75,21 @@ function decodeBody(buffer: Buffer, charset: string): string {
   }
 }
 
+/** Content types accepted when reading web pages. */
+const PAGE_TYPES = new Set(['text/html', 'application/xhtml+xml', 'text/plain'])
+
+/** Content types accepted when reading syndication feeds (pages allowed too). */
+const FEED_TYPES = new Set([
+  'text/html', 'application/xhtml+xml', 'text/plain',
+  'application/rss+xml', 'application/atom+xml', 'application/xml', 'text/xml',
+])
+
 /**
  * Fetch a URL and return the decoded document. Throws on invalid URLs,
- * non-html content types, timeouts, redirect loops, DNS/network failures
+ * disallowed content types, timeouts, redirect loops, DNS/network failures
  * and non-2xx statuses (with the status in the message).
  */
-export async function fetchPage(input: string, config: FetchConfig): Promise<FetchedPage> {
+async function fetchDocument(input: string, config: FetchConfig, allowed: ReadonlySet<string>, typeHint: string): Promise<FetchedPage> {
   let current = assertHttpUrl(input)
 
   for (let hop = 0; hop <= config.maxRedirects; hop += 1) {
@@ -123,11 +134,9 @@ export async function fetchPage(input: string, config: FetchConfig): Promise<Fet
     }
 
     const contentType = (response.headers.get('content-type') ?? 'unknown').split(';')[0]?.trim().toLowerCase() ?? 'unknown'
-    const isHtml = contentType === 'text/html' || contentType === 'application/xhtml+xml'
-    const isPlain = contentType === 'text/plain'
-    if (!isHtml && !isPlain) {
+    if (!allowed.has(contentType)) {
       await response.body?.cancel().catch(() => {})
-      throw new Error(`unsupported content type "${contentType}" at ${current} — this tool reads HTML and plain text pages only`)
+      throw new Error(`unsupported content type "${contentType}" at ${current} — ${typeHint}`)
     }
 
     // Stream the body with a hard size cap; abort early when it blows up.
@@ -171,6 +180,16 @@ export async function fetchPage(input: string, config: FetchConfig): Promise<Fet
 
   // Unreachable: the loop above always returns or throws.
   throw new Error(`unreachable redirect loop for ${input}`)
+}
+
+/** Fetch a web page (HTML or plain text only). */
+export async function fetchPage(input: string, config: FetchConfig): Promise<FetchedPage> {
+  return fetchDocument(input, config, PAGE_TYPES, 'this tool reads HTML and plain text pages only')
+}
+
+/** Fetch a syndication feed document (RSS/Atom/XML; HTML pages allowed too). */
+export async function fetchFeed(input: string, config: FetchConfig): Promise<FetchedPage> {
+  return fetchDocument(input, config, FEED_TYPES, 'expected an HTML/plain-text page or an RSS/Atom/XML feed')
 }
 
 /** Resolve a possibly-relative href against a base page URL. */
