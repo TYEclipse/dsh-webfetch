@@ -32,12 +32,10 @@ export interface FetchedPage {
     /** True when the body exceeded maxBytes and was cut off. */
     truncated: boolean;
 }
-/**
- * Fetch a URL and return the decoded document. Throws on invalid URLs,
- * non-html content types, timeouts, redirect loops, DNS/network failures
- * and non-2xx statuses (with the status in the message).
- */
+/** Fetch a web page (HTML or plain text only). */
 export declare function fetchPage(input: string, config: FetchConfig): Promise<FetchedPage>;
+/** Fetch a syndication feed document (RSS/Atom/XML; HTML pages allowed too). */
+export declare function fetchFeed(input: string, config: FetchConfig): Promise<FetchedPage>;
 /** Resolve a possibly-relative href against a base page URL. */
 export declare function resolveHref(href: string, baseUrl: string): string;
 //# sourceMappingURL=fetch.d.ts.map

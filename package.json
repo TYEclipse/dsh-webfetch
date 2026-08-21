@@ -1,7 +1,7 @@
 {
   "name": "dsh-webfetch",
-  "version": "0.1.0",
-  "description": "Web page reader for DeepSeek Harness (dsh): fetch any URL and extract clean markdown or plain text plus a link inventory — zero runtime dependencies",
+  "version": "0.2.0",
+  "description": "Web page reader for DeepSeek Harness (dsh): fetch any URL and extract clean markdown or plain text, inventory links, and read RSS/Atom feeds — zero runtime dependencies",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -25,7 +25,10 @@
     "fetch",
     "scraper",
     "readability",
-    "markdown"
+    "markdown",
+    "rss",
+    "atom",
+    "feed-reader"
   ],
   "license": "MIT",
   "repository": {

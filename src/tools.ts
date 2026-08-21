@@ -9,12 +9,24 @@
 
 import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { extractPage, type ExtractedPage } from './html.ts'
-import { fetchPage, resolveHref, type FetchedPage, type FetchConfig } from './fetch.ts'
+import { fetchFeed, fetchPage, resolveHref, type FetchedPage, type FetchConfig } from './fetch.ts'
+import { parseFeed, truncateText } from './feed.ts'
 import type { ResolvedConfig } from './index.ts'
 
 export interface ToolSet {
   web_fetch: ToolDefinition
   web_links: ToolDefinition
+  web_feed: ToolDefinition
+}
+
+/** One entry of a web_feed result (optional fields only present when known). */
+export interface FeedItem {
+  title: string
+  url: string
+  published?: string
+  author?: string
+  summary?: string
+  content?: string
 }
 
 /** Fetch a page and extract its content; shared by both tools. */
@@ -39,6 +51,24 @@ function renderLinks(value: unknown): string {
   if (result.links.length === 0) return `no links found on ${result.finalUrl}`
   const lines = result.links.map((link, index) => `  ${index + 1}. ${link.text === '' ? link.href : `${link.text} — ${link.href}`}`)
   return `${result.count} link(s) on ${result.finalUrl}:\n${lines.join('\n')}`
+}
+
+/** Compact markdown renderer for web_feed results. */
+function renderFeed(value: unknown): string {
+  const result = value as { feedTitle: string; finalUrl: string; entryCount: number; truncated: boolean; entries: FeedItem[] }
+  const lines = [
+    `feed: ${result.feedTitle}`,
+    `${result.entryCount} entr${result.entryCount === 1 ? 'y' : 'ies'} from ${result.finalUrl}`,
+  ]
+  for (const [index, entry] of result.entries.entries()) {
+    lines.push(`${index + 1}. ${entry.title}${entry.url === '' ? '' : ` — ${entry.url}`}`)
+    if (entry.published !== undefined) lines.push(`   published: ${entry.published}`)
+    if (entry.author !== undefined) lines.push(`   author: ${entry.author}`)
+    if (entry.summary !== undefined) lines.push(`   ${entry.summary}`)
+    if (entry.content !== undefined) lines.push(`   ${entry.content}`)
+  }
+  if (result.truncated) lines.push('[feed truncated — response body exceeded the size cap]')
+  return lines.join('\n')
 }
 
 /** Build the two web tool definitions from the resolved config. */
@@ -156,5 +186,74 @@ export function buildWebfetchTools(config: ResolvedConfig): ToolSet {
     },
   })
 
-  return { web_fetch, web_links }
+  const web_feed = defineTool({
+    name: 'web_feed',
+    description: 'Read an RSS 2.0 or Atom syndication feed by URL and return its entries as a clean, '
+      + 'LLM-friendly listing (title, link, published date, author, summary and optionally full content). '
+      + 'Pairs with web_fetch: feed URLs are XML documents that web_fetch cannot extract from. Handles '
+      + 'CDATA, HTML entities and relative links. Read-only, sends no credentials or cookies.',
+    parameters: {
+      url: { type: 'string', required: true, description: 'Full http/https URL of the RSS or Atom feed to read.' },
+      maxItems: { type: 'number', description: 'Max entries to return (1–50, default 10).' },
+      includeContent: { type: 'boolean', description: 'Also return each entry\'s full content (default false: summaries only).' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          url: { type: 'string', required: true },
+          finalUrl: { type: 'string', required: true },
+          status: { type: 'number', required: true },
+          feedTitle: { type: 'string', required: true },
+          entryCount: { type: 'number', required: true },
+          truncated: { type: 'boolean', required: true },
+          entries: {
+            type: 'array',
+            required: true,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                title: { type: 'string', required: true },
+                url: { type: 'string', required: true },
+                published: { type: 'string' },
+                author: { type: 'string' },
+                summary: { type: 'string' },
+                content: { type: 'string' },
+              },
+            },
+          },
+        },
+      },
+      render: (_args: { url: string }, value: unknown) => [{ type: 'text', text: renderFeed(value) }],
+    },
+    async execute(args: { url: string; maxItems?: number; includeContent?: boolean }) {
+      const maxItems = Math.min(Math.max(args.maxItems ?? 10, 1), 50)
+      const fetched = await fetchFeed(args.url, config)
+      const feed = parseFeed(fetched.body)
+      const entries: FeedItem[] = feed.entries.slice(0, maxItems).map((entry) => {
+        const item: FeedItem = { title: entry.title, url: resolveHref(entry.url, fetched.finalUrl) }
+        if (entry.published !== '') item.published = entry.published
+        if (entry.author !== '') item.author = entry.author
+        if (entry.summary !== '') item.summary = truncateText(entry.summary, 500)
+        if (args.includeContent ?? false) {
+          const full = entry.content !== '' ? entry.content : entry.summary
+          if (full !== '') item.content = truncateText(full, 2_000)
+        }
+        return item
+      })
+      return {
+        url: args.url,
+        finalUrl: fetched.finalUrl,
+        status: fetched.status,
+        feedTitle: feed.title,
+        entryCount: entries.length,
+        truncated: fetched.truncated,
+        entries,
+      }
+    },
+  })
+
+  return { web_fetch, web_links, web_feed }
 }

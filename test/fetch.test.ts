@@ -6,7 +6,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { createServer, type Server } from 'node:http'
-import { assertHttpUrl, fetchPage } from '../src/fetch.ts'
+import { assertHttpUrl, fetchFeed, fetchPage } from '../src/fetch.ts'
 
 let server: Server
 let base: string
@@ -74,6 +74,28 @@ beforeAll(async () => {
       case '/plain':
         res.writeHead(200, { 'content-type': 'text/plain' })
         res.end('just plain text')
+        break
+      case '/feed-rss':
+        res.writeHead(200, { 'content-type': 'application/rss+xml; charset=utf-8' })
+        res.end('<?xml version="1.0" encoding="UTF-8"?><rss version="2.0"><channel><title>Fixture Feed</title><item><title>Post</title><link>/post</link></item></channel></rss>')
+        break
+      case '/feed-atom':
+        res.writeHead(200, { 'content-type': 'application/atom+xml' })
+        res.end('<?xml version="1.0" encoding="utf-8"?><feed xmlns="http://www.w3.org/2005/Atom"><title>Atom Fixture</title><entry><title>Entry</title><link href="/e"/></entry></feed>')
+        break
+      case '/feed-xml':
+        res.writeHead(200, { 'content-type': 'text/xml' })
+        res.end('<rss version="2.0"><channel><title>XML Fixture</title></channel></rss>')
+        break
+      case '/feed-xml-charset': {
+        const body = Buffer.from('<?xml version="1.0" encoding="iso-8859-1"?><rss version="2.0"><channel><title>caf\u00e9 feed</title></channel></rss>', 'latin1')
+        res.writeHead(200, { 'content-type': 'text/xml' })
+        res.end(body)
+        break
+      }
+      case '/feed-redirect':
+        res.writeHead(302, { location: '/feed-rss' })
+        res.end()
         break
       default:
         res.writeHead(404)
@@ -163,5 +185,43 @@ describe('fetchPage', () => {
     await expect(
       fetchPage('https://10.255.255.1/', { ...config, timeoutMs: 500 }),
     ).rejects.toThrow(/timed out|fetch failed/)
+  })
+})
+
+describe('fetchFeed', () => {
+  it('accepts application/rss+xml feeds', async () => {
+    const feed = await fetchFeed(`${base}/feed-rss`, config)
+    expect(feed.status).toBe(200)
+    expect(feed.contentType).toBe('application/rss+xml')
+    expect(feed.body).toContain('<rss version="2.0">')
+  })
+
+  it('accepts application/atom+xml feeds', async () => {
+    const feed = await fetchFeed(`${base}/feed-atom`, config)
+    expect(feed.body).toContain('<feed')
+  })
+
+  it('accepts text/xml feeds', async () => {
+    const feed = await fetchFeed(`${base}/feed-xml`, config)
+    expect(feed.body).toContain('XML Fixture')
+  })
+
+  it('still accepts plain HTML pages (some feeds are served as text/html)', async () => {
+    const feed = await fetchFeed(`${base}/ok`, config)
+    expect(feed.body).toContain('Hello &amp; goodbye')
+  })
+
+  it('follows redirects to a feed', async () => {
+    const feed = await fetchFeed(`${base}/feed-redirect`, config)
+    expect(feed.finalUrl).toBe(`${base}/feed-rss`)
+  })
+
+  it('honours the XML declaration charset when the header lacks one', async () => {
+    const feed = await fetchFeed(`${base}/feed-xml-charset`, config)
+    expect(feed.body).toContain('caf\u00e9 feed')
+  })
+
+  it('rejects non-feed content types', async () => {
+    await expect(fetchFeed(`${base}/json`, config)).rejects.toThrow(/unsupported content type/)
   })
 })
