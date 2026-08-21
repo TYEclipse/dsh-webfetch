@@ -71,7 +71,26 @@ plugins:
     maxChars: 50000         # 提取正文长度上限（1000–200000）
     maxRedirects: 3         # 重定向跳数上限（0–10）
     userAgent: "dsh-webfetch/0.2 (DeepSeek Harness plugin)"
+    httpsProxy: ""          # http://host:port；留空默认读 HTTPS_PROXY 环境变量，'' 显式禁用
+    httpProxy: ""           # 同上，对应 HTTP_PROXY
+    noProxy: ""             # 直连白名单，留空默认读 NO_PROXY 环境变量
 ```
+
+## 代理支持
+
+Node 内置 `fetch` 不读取 `HTTP_PROXY`/`HTTPS_PROXY`，在必须走代理的网络里所有请求都会失败。dsh-webfetch 内置零依赖 http 代理传输（https 走 CONNECT 隧道、http 走绝对 URI 形式，`NO_PROXY` 支持精确域名/后缀/通配符/IPv4 CIDR），并自动启用：
+
+- `httpProxy` / `httpsProxy`（默认读 `HTTP_PROXY` / `HTTPS_PROXY` 环境变量）——`http://host:port` 形式；设为空字符串即禁用。
+- `noProxy`（默认读 `NO_PROXY`）——逗号分隔的直连白名单（精确主机名、`.后缀`、`*.通配`、IPv4 CIDR、可带 `:端口`）。
+
+```yaml
+plugins:
+  dsh-webfetch:
+    httpsProxy: "http://127.0.0.1:7897"   # 覆盖环境变量
+    noProxy: "localhost,.internal,10.0.0.0/8"
+```
+
+代理 URL 内嵌的凭证只会以 `Proxy-Authorization: Basic` 发给代理本身，绝不发给目标站点。
 
 ## 安全模型
 

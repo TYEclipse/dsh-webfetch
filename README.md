@@ -88,6 +88,29 @@ plugins:
     userAgent: "dsh-webfetch/0.2 (DeepSeek Harness plugin)"
 ```
 
+## Proxy support
+
+Node's built-in `fetch` ignores `HTTP_PROXY`/`HTTPS_PROXY`, so on networks
+that require a proxy every request would fail. dsh-webfetch ships a
+zero-dependency http-proxy transport (CONNECT tunnelling for https,
+absolute-URI form for http, `NO_PROXY` matching with wildcard and IPv4 CIDR
+support) and uses it automatically:
+
+- `httpProxy` / `httpsProxy` (default: `HTTP_PROXY` / `HTTPS_PROXY` env) —
+  `http://host:port` URL; set to an empty string to disable.
+- `noProxy` (default: `NO_PROXY` env) — comma-separated bypass list
+  (exact hosts, `.suffix`, `*.wildcard`, IPv4 CIDRs, optional `:port`).
+
+```yaml
+plugins:
+  dsh-webfetch:
+    httpsProxy: "http://127.0.0.1:7897"   # override env
+    noProxy: "localhost,.internal,10.0.0.0/8"
+```
+
+Proxy credentials embedded in the proxy URL are sent as
+`Proxy-Authorization: Basic` (to the proxy only, never to the target).
+
 ## Safety model
 
 - **http/https only** — `file:`, `ftp:`, `javascript:` and friends are rejected.
@@ -120,4 +143,4 @@ pnpm lint       # oxlint src test
 
 ## 中文简介
 
-dsh-webfetch 是 DeepSeek Harness 的网页阅读插件：智能体拿到 URL 后可以直接抓取页面并提取干净的 Markdown 或纯文本（保留标题、链接、列表与代码块，剥离脚本/样式），`web_links` 可列出页面全部链接（解析为绝对地址、去重、限量），`web_feed` 可解析 RSS 2.0 / Atom 订阅源为条目清单（标题/链接/发布时间/作者/摘要/正文，处理 CDATA、HTML 实体与相对链接）。零运行时依赖、只读、不发送凭证；http/https 协议限定、超时/重定向/体积/文本长度全部有上限，字符集自动识别（Content-Type → XML 声明/meta → UTF-8）。与内置搜索互补：搜索给线索，webfetch 读正文。
+dsh-webfetch 是 DeepSeek Harness 的网页阅读插件：智能体拿到 URL 后可以直接抓取页面并提取干净的 Markdown 或纯文本（保留标题、链接、列表与代码块，剥离脚本/样式），`web_links` 可列出页面全部链接（解析为绝对地址、去重、限量），`web_feed` 可解析 RSS 2.0 / Atom 订阅源为条目清单（标题/链接/发布时间/作者/摘要/正文，处理 CDATA、HTML 实体与相对链接）。零运行时依赖、只读、不发送凭证；http/https 协议限定、超时/重定向/体积/文本长度全部有上限，字符集自动识别（Content-Type → XML 声明/meta → UTF-8）；内置零依赖 http 代理支持（CONNECT 隧道 + NO_PROXY 白名单，自动读环境变量），在必须走代理的网络也能正常工作。与内置搜索互补：搜索给线索，webfetch 读正文。

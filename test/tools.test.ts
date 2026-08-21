@@ -10,22 +10,31 @@ import { buildWebfetchTools } from '../src/tools.ts'
 
 describe('resolveConfig', () => {
   it('applies every default', () => {
-    const resolved = resolveConfig({})
+    const resolved = resolveConfig({}, {})
     expect(resolved).toEqual({
       timeoutMs: 10_000,
       maxBytes: 1_500_000,
       maxChars: 50_000,
       maxRedirects: 3,
       userAgent: 'dsh-webfetch/0.2 (DeepSeek Harness plugin)',
+      proxy: { httpProxy: '', httpsProxy: '', noProxy: '' },
     })
   })
 
   it('honours overrides', () => {
-    const resolved = resolveConfig({ timeoutMs: 2_000, maxRedirects: 5, maxChars: 10_000 })
+    const resolved = resolveConfig({ timeoutMs: 2_000, maxRedirects: 5, maxChars: 10_000 }, {})
     expect(resolved.timeoutMs).toBe(2_000)
     expect(resolved.maxRedirects).toBe(5)
     expect(resolved.maxChars).toBe(10_000)
     expect(resolved.maxBytes).toBe(1_500_000)
+  })
+
+  it('resolves proxy settings: config overrides env, empty string disables', () => {
+    const env = { HTTP_PROXY: 'http://env-proxy:7897', HTTPS_PROXY: 'http://env-proxy:7897', NO_PROXY: 'localhost' }
+    const fromEnv = resolveConfig({}, env)
+    expect(fromEnv.proxy).toEqual({ httpProxy: 'http://env-proxy:7897', httpsProxy: 'http://env-proxy:7897', noProxy: 'localhost' })
+    const overridden = resolveConfig({ httpsProxy: 'http://my-proxy:3128', httpProxy: '', noProxy: 'example.com' }, env)
+    expect(overridden.proxy).toEqual({ httpProxy: '', httpsProxy: 'http://my-proxy:3128', noProxy: 'example.com' })
   })
 })
 
@@ -112,7 +121,7 @@ describe('web_feed end-to-end (fixture server)', () => {
   }
   type FeedArgs = { url: string; maxItems?: number; includeContent?: boolean }
   const feedRun = (url: string, args: Partial<FeedArgs> = {}) => {
-    const tools = buildWebfetchTools(resolveConfig({}))
+    const tools = buildWebfetchTools(resolveConfig({}, {}))
     const run = tools.web_feed.execute as (args: FeedArgs) => Promise<FeedResult>
     return run({ url, ...args })
   }

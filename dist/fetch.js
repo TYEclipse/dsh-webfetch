@@ -3,11 +3,16 @@
  * redirects (http/https only), caps the response size, detects the charset
  * and returns the decoded document.
  *
- * Uses the global fetch (Node >= 20). No credentials, cookies or custom
- * headers are ever attached, and credentials embedded in URLs are rejected.
+ * Direct requests use the global fetch (Node >= 20); when an http proxy is
+ * configured (explicitly or via HTTP_PROXY/HTTPS_PROXY env) and the target is
+ * not excluded by NO_PROXY, a zero-dependency proxy transport is used instead
+ * (see proxy.ts). No credentials, cookies or custom headers are ever
+ * attached beyond a plain user-agent, and credentials embedded in URLs are
+ * rejected.
  *
  * @module dsh-webfetch/fetch
  */
+import { proxyFor, proxiedFetch } from "./proxy.js";
 /** A validated http/https URL string. */
 export function assertHttpUrl(input) {
     let url;
@@ -66,16 +71,18 @@ const FEED_TYPES = new Set([
 async function fetchDocument(input, config, allowed, typeHint) {
     let current = assertHttpUrl(input);
     for (let hop = 0; hop <= config.maxRedirects; hop += 1) {
+        const target = new URL(current);
+        const decision = await proxyFor(target, config.proxy);
+        const signal = AbortSignal.timeout(config.timeoutMs);
+        const headers = {
+            'user-agent': config.userAgent,
+            accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5',
+        };
         let response;
         try {
-            response = await fetch(current, {
-                redirect: 'manual',
-                signal: AbortSignal.timeout(config.timeoutMs),
-                headers: {
-                    'user-agent': config.userAgent,
-                    accept: 'text/html,application/xhtml+xml,text/plain;q=0.9,*/*;q=0.5',
-                },
-            });
+            response = decision.proxy === null
+                ? await fetch(target, { redirect: 'manual', signal, headers })
+                : await proxiedFetch(target, decision.proxy, { timeoutMs: config.timeoutMs, maxBytes: config.maxBytes, signal, headers });
         }
         catch (error) {
             if (error instanceof Error && error.name === 'TimeoutError') {
