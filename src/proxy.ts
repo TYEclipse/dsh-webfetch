@@ -123,6 +123,8 @@ export interface ProxyRequestOptions {
   maxBytes: number
   signal: AbortSignal
   headers: Record<string, string>
+  /** Request method (default: GET). HEAD requests download no body. */
+  method?: string
 }
 
 interface HeadResult {
@@ -363,7 +365,7 @@ export async function proxiedFetch(target: URL, proxy: URL, options: ProxyReques
     const headerLines = [`Host: ${target.hostname}:${port}`]
     if (!isHttps && auth !== '') headerLines.push(auth)
     for (const [key, value] of Object.entries(options.headers)) headerLines.push(`${key}: ${value}`)
-    socket.write(`GET ${requestTarget} HTTP/1.1\r\n${headerLines.join('\r\n')}\r\nConnection: close\r\n\r\n`)
+    socket.write(`${options.method ?? 'GET'} ${requestTarget} HTTP/1.1\r\n${headerLines.join('\r\n')}\r\nConnection: close\r\n\r\n`)
 
     const { head, rest } = await readHead(socket)
     const result = parseHead(head)
