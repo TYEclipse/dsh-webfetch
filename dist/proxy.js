@@ -352,7 +352,7 @@ export async function proxiedFetch(target, proxy, options) {
             headerLines.push(auth);
         for (const [key, value] of Object.entries(options.headers))
             headerLines.push(`${key}: ${value}`);
-        socket.write(`GET ${requestTarget} HTTP/1.1\r\n${headerLines.join('\r\n')}\r\nConnection: close\r\n\r\n`);
+        socket.write(`${options.method ?? 'GET'} ${requestTarget} HTTP/1.1\r\n${headerLines.join('\r\n')}\r\nConnection: close\r\n\r\n`);
         const { head, rest } = await readHead(socket);
         const result = parseHead(head);
         const framing = framingOf(result.headers);

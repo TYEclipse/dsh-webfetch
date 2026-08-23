@@ -1,6 +1,6 @@
 # dsh-webfetch
 
-DeepSeek Harness（dsh）的网页阅读插件：给定 URL，抓取网页并提取干净的 Markdown / 纯文本正文，附链接清单与 RSS/Atom 订阅源解析。零运行时依赖，只读，不发送任何凭证。
+DeepSeek Harness（dsh）的网页阅读插件：给定 URL，抓取网页并提取干净的 Markdown / 纯文本正文，附链接清单、RSS/Atom 订阅源解析与 HTTP 头部探测。零运行时依赖，只读，不发送任何凭证。
 
 [English](README.md) | 中文
 
@@ -51,15 +51,27 @@ agent: web_feed("https://blog.example.com/feed.xml", maxItems: 5)
        Hello world — café & tea.
 ```
 
+### `web_headers`
+
+探测任意 URL 的 HTTP 状态码、响应头与重定向链，**不下载正文**——`web_fetch` 的读前诊断搭档：先查状态码/内容类型/重定向/缓存或安全头，再决定是否抓正文。默认用 `HEAD`（服务器返回 405/501 时自动回退 `GET`）；与 `web_fetch` 不同，任何状态码（含 404/500）都会照常报告而不是报错。
+
+| 参数              | 类型               | 默认值 | 说明                                       |
+| ----------------- | ------------------ | ------ | ------------------------------------------ |
+| `url`             | string（必填）     | —      | 待探测的完整 http/https 地址。             |
+| `method`          | `'HEAD' \| 'GET'` | `HEAD` | HEAD 不下载正文；GET 必达但会传输正文。    |
+| `followRedirects` | boolean            | `true` | 跟随重定向并逐跳报告整条链。               |
+
+返回 `{ url, finalUrl, status, statusText, method, headers, redirects }`，其中 `headers` 为完整响应头表（键名小写），`redirects` 逐跳记录 `{ url, status, location }`。
+
 ## 安装
 
 ```sh
 dsh plugin --profile web add github:TYEclipse/dsh-webfetch
 # 或指定已发布版本：
-dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.2.0
+dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.3.0
 ```
 
-重启会话后模型即可使用这三个工具。
+重启会话后模型即可使用这四个工具。
 
 ## 配置（均可选，以下为默认值）
 
@@ -70,7 +82,7 @@ plugins:
     maxBytes: 1500000       # 响应体积上限，字节（10000–5000000）
     maxChars: 50000         # 提取正文长度上限（1000–200000）
     maxRedirects: 3         # 重定向跳数上限（0–10）
-    userAgent: "dsh-webfetch/0.2 (DeepSeek Harness plugin)"
+    userAgent: "dsh-webfetch/0.3 (DeepSeek Harness plugin)"
     httpsProxy: ""          # http://host:port；留空默认读 HTTPS_PROXY 环境变量，'' 显式禁用
     httpProxy: ""           # 同上，对应 HTTP_PROXY
     noProxy: ""             # 直连白名单，留空默认读 NO_PROXY 环境变量
@@ -105,7 +117,7 @@ plugins:
 ```sh
 pnpm install
 pnpm build      # tsc
-pnpm test       # vitest — 62 个测试，全程离线（本地 fixture 服务器）
+pnpm test       # vitest — 97 个测试，全程离线（本地 fixture 服务器）
 pnpm lint       # oxlint src test
 ```
 

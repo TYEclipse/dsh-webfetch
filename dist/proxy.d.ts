@@ -39,6 +39,8 @@ export interface ProxyRequestOptions {
     maxBytes: number;
     signal: AbortSignal;
     headers: Record<string, string>;
+    /** Request method (default: GET). HEAD requests download no body. */
+    method?: string;
 }
 interface HeadResult {
     status: number;

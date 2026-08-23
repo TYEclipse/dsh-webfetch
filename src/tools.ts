@@ -1,8 +1,10 @@
 /**
- * Tool definitions for dsh-webfetch: two read-only web tools exposed to every
- * agent — web_fetch (URL to clean markdown/text) and web_links (link
- * inventory of a page). Both validate the URL, follow a bounded number of
- * redirects, enforce a size cap and never send credentials.
+ * Tool definitions for dsh-webfetch: read-only web tools exposed to every
+ * agent — web_fetch (URL to clean markdown/text), web_links (link
+ * inventory of a page), web_feed (RSS/Atom entry listing) and web_headers
+ * (HTTP status/headers/redirect chain without the body). All validate the
+ * URL, follow a bounded number of redirects, enforce a size cap and never
+ * send credentials.
  *
  * @module dsh-webfetch/tools
  */
@@ -11,12 +13,14 @@ import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { extractPage, type ExtractedPage } from './html.ts'
 import { fetchFeed, fetchPage, resolveHref, type FetchedPage, type FetchConfig } from './fetch.ts'
 import { parseFeed, truncateText } from './feed.ts'
+import { probeUrl, type HeaderProbe, type RedirectHop } from './head.ts'
 import type { ResolvedConfig } from './index.ts'
 
 export interface ToolSet {
   web_fetch: ToolDefinition
   web_links: ToolDefinition
   web_feed: ToolDefinition
+  web_headers: ToolDefinition
 }
 
 /** One entry of a web_feed result (optional fields only present when known). */
@@ -53,7 +57,7 @@ function renderLinks(value: unknown): string {
   return `${result.count} link(s) on ${result.finalUrl}:\n${lines.join('\n')}`
 }
 
-/** Compact markdown renderer for web_feed results. */
+/** Compact text renderer for web_feed results. */
 function renderFeed(value: unknown): string {
   const result = value as { feedTitle: string; finalUrl: string; entryCount: number; truncated: boolean; entries: FeedItem[] }
   const lines = [
@@ -68,6 +72,23 @@ function renderFeed(value: unknown): string {
     if (entry.content !== undefined) lines.push(`   ${entry.content}`)
   }
   if (result.truncated) lines.push('[feed truncated — response body exceeded the size cap]')
+  return lines.join('\n')
+}
+
+/** Compact text renderer for web_headers results. */
+function renderHeaders(value: unknown): string {
+  const result = value as HeaderProbe
+  const lines = [`HTTP ${result.status} ${result.statusText} — ${result.method} ${result.url}`]
+  if (result.url !== result.finalUrl) lines.push(`final URL: ${result.finalUrl}`)
+  if (result.redirects.length > 0) {
+    lines.push('redirect chain:')
+    for (const [index, hop] of result.redirects.entries()) {
+      lines.push(`  ${index + 1}. ${hop.status} ${hop.url} → ${hop.location}`)
+    }
+  }
+  const entries = Object.entries(result.headers)
+  lines.push(`${entries.length} header(s):`)
+  for (const [key, value] of entries) lines.push(`  ${key}: ${value}`)
   return lines.join('\n')
 }
 
@@ -255,5 +276,64 @@ export function buildWebfetchTools(config: ResolvedConfig): ToolSet {
     },
   })
 
-  return { web_fetch, web_links, web_feed }
+  const web_headers = defineTool({
+    name: 'web_headers',
+    description: 'Inspect the HTTP status, response headers and redirect chain of a URL without downloading '
+      + 'the page body. Uses HEAD by default (falls back to GET automatically when the server does not support '
+      + 'HEAD); any status is reported — this is a diagnostic, unlike web_fetch. Useful before fetching to '
+      + 'check status codes, content types, redirects, caching or security headers of an endpoint. '
+      + 'Read-only, sends no credentials or cookies.',
+    parameters: {
+      url: { type: 'string', required: true, description: 'Full http/https URL to inspect.' },
+      method: { type: 'string', enum: ['HEAD', 'GET'], description: 'HTTP method: HEAD downloads no body (default, falls back to GET automatically when unsupported); GET always works but transfers the body.' },
+      followRedirects: { type: 'boolean', description: 'Follow redirects and report the chain (default true).' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          url: { type: 'string', required: true },
+          finalUrl: { type: 'string', required: true },
+          status: { type: 'number', required: true },
+          statusText: { type: 'string', required: true },
+          method: { type: 'string', required: true },
+          headers: {
+            type: 'object',
+            additionalProperties: true,
+            required: true,
+          },
+          redirects: {
+            type: 'array',
+            required: true,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                url: { type: 'string', required: true },
+                status: { type: 'number', required: true },
+                location: { type: 'string', required: true },
+              },
+            },
+          },
+        },
+      },
+      render: (_args: { url: string }, value: unknown) => [{ type: 'text', text: renderHeaders(value) }],
+    },
+    async execute(args: { url: string; method?: string; followRedirects?: boolean }) {
+      const method = args.method === 'GET' ? 'GET' : 'HEAD'
+      const result: HeaderProbe = await probeUrl(args.url, config, method, args.followRedirects ?? true)
+      return {
+        url: result.url,
+        finalUrl: result.finalUrl,
+        status: result.status,
+        statusText: result.statusText,
+        method: result.method,
+        headers: result.headers,
+        redirects: result.redirects.map((hop: RedirectHop) => ({ url: hop.url, status: hop.status, location: hop.location })),
+      }
+    },
+  })
+
+  return { web_fetch, web_links, web_feed, web_headers }
 }

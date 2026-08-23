@@ -1,8 +1,10 @@
 /**
- * Tool definitions for dsh-webfetch: two read-only web tools exposed to every
- * agent — web_fetch (URL to clean markdown/text) and web_links (link
- * inventory of a page). Both validate the URL, follow a bounded number of
- * redirects, enforce a size cap and never send credentials.
+ * Tool definitions for dsh-webfetch: read-only web tools exposed to every
+ * agent — web_fetch (URL to clean markdown/text), web_links (link
+ * inventory of a page), web_feed (RSS/Atom entry listing) and web_headers
+ * (HTTP status/headers/redirect chain without the body). All validate the
+ * URL, follow a bounded number of redirects, enforce a size cap and never
+ * send credentials.
  *
  * @module dsh-webfetch/tools
  */
@@ -12,6 +14,7 @@ export interface ToolSet {
     web_fetch: ToolDefinition;
     web_links: ToolDefinition;
     web_feed: ToolDefinition;
+    web_headers: ToolDefinition;
 }
 /** One entry of a web_feed result (optional fields only present when known). */
 export interface FeedItem {

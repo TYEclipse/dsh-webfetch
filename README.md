@@ -5,7 +5,7 @@
 
 A web page reader plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`).
 `dsh` agents can search, but until now they could not *read the page behind a URL*.
-`dsh-webfetch` closes that gap with three read-only tools and **zero runtime dependencies** (Node built-ins + global `fetch` only).
+`dsh-webfetch` closes that gap with four read-only tools and **zero runtime dependencies** (Node built-ins + global `fetch` only).
 
 ## Tools
 
@@ -64,12 +64,45 @@ agent: web_feed("https://blog.example.com/feed.xml", maxItems: 5)
        Hello world — café & tea.
 ```
 
+### `web_headers`
+
+Inspect the HTTP status, response headers and redirect chain of a URL
+**without downloading the page body** — the diagnostic companion to
+`web_fetch`: check status codes, content types, redirects, caching or
+security headers before (or instead of) pulling the content. Uses `HEAD`
+by default and falls back to `GET` automatically when the server answers
+405/501; unlike `web_fetch`, *any* status is reported (404/500/… included)
+rather than thrown.
+
+| Parameter         | Type              | Default | Description                                                              |
+| ----------------- | ----------------- | ------- | ------------------------------------------------------------------------ |
+| `url`             | string (required) | —       | Full http/https URL to inspect.                                          |
+| `method`          | `'HEAD' \| 'GET'` | `HEAD`  | `HEAD` downloads no body; `GET` always works but transfers the body.     |
+| `followRedirects` | boolean           | `true`  | Follow redirects and report every hop of the chain.                      |
+
+Returns `{ url, finalUrl, status, statusText, method, headers, redirects }`
+where `headers` is the full response-header map (lower-cased keys) and
+`redirects` lists each hop as `{ url, status, location }`.
+
+```text
+user: is that download link still alive, and does it redirect?
+agent: web_headers("https://example.com/downloads/latest")
+  → HTTP 200 OK — HEAD https://example.com/downloads/latest
+    redirect chain:
+      1. 301 https://example.com/downloads/latest → https://cdn.example.com/releases/latest.zip
+    final URL: https://cdn.example.com/releases/latest.zip
+    12 header(s):
+      content-type: application/zip
+      content-length: 4821337
+      ...
+```
+
 ## Install
 
 ```sh
 dsh plugin --profile web add github:TYEclipse/dsh-webfetch
 # or a pinned release:
-dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.2.0
+dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.3.0
 ```
 
 Restart your agent session and the tools are available to the model.
@@ -85,7 +118,7 @@ plugins:
     maxBytes: 1500000       # response size cap in bytes (10000–5000000)
     maxChars: 50000         # extracted content cap in chars (1000–200000)
     maxRedirects: 3         # redirect hops to follow (0–10)
-    userAgent: "dsh-webfetch/0.2 (DeepSeek Harness plugin)"
+    userAgent: "dsh-webfetch/0.3 (DeepSeek Harness plugin)"
 ```
 
 ## Proxy support
@@ -131,7 +164,7 @@ Proxy credentials embedded in the proxy URL are sent as
 ```sh
 pnpm install
 pnpm build      # tsc
-pnpm test       # vitest — 62 tests, fully offline (local fixture server)
+pnpm test       # vitest — 97 tests, fully offline (local fixture servers)
 pnpm lint       # oxlint src test
 ```
 
@@ -143,4 +176,4 @@ pnpm lint       # oxlint src test
 
 ## 中文简介
 
-dsh-webfetch 是 DeepSeek Harness 的网页阅读插件：智能体拿到 URL 后可以直接抓取页面并提取干净的 Markdown 或纯文本（保留标题、链接、列表与代码块，剥离脚本/样式），`web_links` 可列出页面全部链接（解析为绝对地址、去重、限量），`web_feed` 可解析 RSS 2.0 / Atom 订阅源为条目清单（标题/链接/发布时间/作者/摘要/正文，处理 CDATA、HTML 实体与相对链接）。零运行时依赖、只读、不发送凭证；http/https 协议限定、超时/重定向/体积/文本长度全部有上限，字符集自动识别（Content-Type → XML 声明/meta → UTF-8）；内置零依赖 http 代理支持（CONNECT 隧道 + NO_PROXY 白名单，自动读环境变量），在必须走代理的网络也能正常工作。与内置搜索互补：搜索给线索，webfetch 读正文。
+dsh-webfetch 是 DeepSeek Harness 的网页阅读插件：智能体拿到 URL 后可以直接抓取页面并提取干净的 Markdown 或纯文本（保留标题、链接、列表与代码块，剥离脚本/样式），`web_links` 可列出页面全部链接（解析为绝对地址、去重、限量），`web_feed` 可解析 RSS 2.0 / Atom 订阅源为条目清单（标题/链接/发布时间/作者/摘要/正文，处理 CDATA、HTML 实体与相对链接），`web_headers` 可用 HEAD 请求探测任意 URL 的 HTTP 状态码、响应头与重定向链而不下载正文（服务器不支持 HEAD 时自动回退 GET，非 2xx 状态照常报告）。零运行时依赖、只读、不发送凭证；http/https 协议限定、超时/重定向/体积/文本长度全部有上限，字符集自动识别（Content-Type → XML 声明/meta → UTF-8）；内置零依赖 http 代理支持（CONNECT 隧道 + NO_PROXY 白名单，自动读环境变量），在必须走代理的网络也能正常工作。与内置搜索互补：搜索给线索，webfetch 读正文，web_headers 读前诊断。

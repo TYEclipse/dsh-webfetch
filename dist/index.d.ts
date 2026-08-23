@@ -1,15 +1,18 @@
 /**
  * dsh-webfetch — web page reader for DeepSeek Harness.
  *
- * Three read-only tools, zero runtime dependencies (node built-ins + global
+ * Four read-only tools, zero runtime dependencies (node built-ins + global
  * fetch only):
- *   web_fetch   — fetch a URL and extract clean markdown or plain text
- *                 (headings, links, lists, code fences; scripts and styling
- *                 stripped), with a size cap and a bounded redirect chain
- *   web_links   — inventory every link on a page, resolved to absolute URLs,
- *                 deduplicated and capped
- *   web_feed    — read an RSS 2.0 / Atom feed and return a clean entry
- *                 listing (title, link, date, author, summary, content)
+ *   web_fetch    — fetch a URL and extract clean markdown or plain text
+ *                  (headings, links, lists, code fences; scripts and styling
+ *                  stripped), with a size cap and a bounded redirect chain
+ *   web_links    — inventory every link on a page, resolved to absolute URLs,
+ *                  deduplicated and capped
+ *   web_feed     — read an RSS 2.0 / Atom feed and return a clean entry
+ *                  listing (title, link, date, author, summary, content)
+ *   web_headers  — inspect the HTTP status, response headers and redirect
+ *                  chain of a URL without downloading the body (HEAD first,
+ *                  automatic GET fallback)
  *
  * Safety model: http/https only, embedded URL credentials rejected, no
  * cookies or credentials sent, redirect hops limited, body size capped,
