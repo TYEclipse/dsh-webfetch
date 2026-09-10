@@ -1,6 +1,6 @@
 {
   "name": "dsh-webfetch",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Web page reader for DeepSeek Harness (dsh): fetch any URL and extract clean markdown or plain text, inventory links, read RSS/Atom feeds, and inspect HTTP headers without the body — zero runtime dependencies",
   "type": "module",
   "main": "dist/index.js",

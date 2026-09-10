@@ -16,10 +16,10 @@ while read -r local_ref local_sha remote_ref remote_sha; do
   if [ "$base" = "0000000000000000000000000000000000000000" ]; then
     base="$EMPTY_TREE"
   fi
-  if git diff "$base" "$local_sha" -- . ':(exclude)pnpm-lock.yaml' ':(exclude)*.map' ':(exclude)coverage/*' 2>/dev/null \
+  if git diff "$base" "$local_sha" -- . ':(exclude)pnpm-lock.yaml' ':(exclude)*.map' ':(exclude)coverage/*' ':(exclude).githooks/*' 2>/dev/null \
        | grep -qniE "$PATTERN"; then
     echo "❌ pre-push 拦截：推送范围检出工作相关内容（红线词）。已阻止推送，请清理后重试。"
-    echo "   （若是 base64/哈希误报，确认命中行后按 R31 口径排除生成物）"
+    echo "   （误报排查：① base64/哈希 → 已在 R31 排除 pnpm-lock/coverage/*.map；② 本钩子自身 → 已排除 .githooks/*）"
     exit 1
   fi
 done
