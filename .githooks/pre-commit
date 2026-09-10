@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# 插件仓提交门禁（版本号 + 构建 + 测试 + 覆盖率棘轮）——由 tools/install_gates.sh 安装到各仓 .githooks/pre-commit
+#
+# 应急：git commit --no-verify，或提交信息含 [skip-version]（应急后必须补记）
+set -uo pipefail
+
+ROOT="$(git rev-parse --show-toplevel)" || exit 1
+cd "$ROOT" || exit 1
+GITDIR="$(git rev-parse --git-dir)"
+TOOLS="$HOME/projects/dsh-plugins/tools"
+
+if grep -q '\[skip-version\]' "$GITDIR/COMMIT_EDITMSG" 2>/dev/null; then
+  echo "⚠️  [skip-version] 命中——跳过版本与覆盖率门禁（应急通道，请补记）"
+  exit 0
+fi
+
+CHANGED="$(git diff --cached --name-only)"
+[ -z "$CHANGED" ] && exit 0
+
+# 代码/发行轮判定：源码、测试、构建与发行清单变化才走全量门禁
+if printf '%s\n' "$CHANGED" | grep -Eq '^(src/|test/|package\.json$|tsconfig\.json$|cordis\.patch\.yml$|pnpm-.*\.yaml$|\.githooks/|tools/|\.coverage-baseline\.json$)'; then
+  MODE=code
+else
+  MODE=doc
+fi
+
+if [ "$MODE" = "code" ]; then
+  echo "🔒 插件代码轮门禁：版本号 + 构建 + 测试 + 覆盖率棘轮"
+
+  if ! printf '%s\n' "$CHANGED" | grep -qx "package.json"; then
+    echo "❌ 代码轮必须 bump 版本号：package.json 未变化"
+    echo "   python3 $TOOLS/bump.py . patch \"说明\""
+    exit 1
+  fi
+
+  NEWV="$(python3 -c "import json;print(json.load(open('package.json'))['version'])" 2>/dev/null)"
+  OLDV="$(git show HEAD:package.json 2>/dev/null | python3 -c "import sys,json;print(json.load(sys.stdin)['version'])" 2>/dev/null || echo none)"
+  if [ -z "$NEWV" ] || [ "$NEWV" = "$OLDV" ]; then
+    echo "❌ package.json 版本未变（当前 $NEWV / HEAD $OLDV）——先 bump 再提交"
+    exit 1
+  fi
+
+  if ! bash "$TOOLS/run_tests.sh" "$ROOT"; then
+    echo "❌ 门禁未过（构建/测试/覆盖率）——提交被拦"
+    exit 1
+  fi
+
+  if ! git diff --quiet -- .coverage-baseline.json; then
+    git add .coverage-baseline.json
+    echo "ℹ️  覆盖率基线已上调并补入本次提交"
+  fi
+else
+  echo "📄 文档轮门禁：跳过构建与覆盖率（只改文档/CHANGELOG）"
+fi
+
+echo "✅ 门禁通过（$MODE 轮）"
+exit 0

@@ -1,0 +1,26 @@
+#!/bin/bash
+# pre-push 违禁词防线（dsh-autopilot 三重防线之三）
+# 安装：由 tools/install_gates.sh 拷到插件仓 .githooks/pre-push（配合 core.hooksPath=.githooks）
+# 扫描推送范围（remote..local diff），比 staged-only 可靠（commit 后 staged 为空）
+#
+# v2 修正（R31 实证）：
+#  ① 拉丁缩写一律加词界 \b——旧写法把 NVH 裸放，base64 里 "…pnVHr…" 会误报拦推送
+#  ② 排除生成物：pnpm-lock.yaml 的 integrity 哈希、*.map、coverage/ 产物都不是"内容"
+
+PATTERN='广汽|汽车|降噪|声学|振动|噪声|发动机|模态|衬套|主动声音|专家系统|\b(NVH|GAC|ANC|DOE|FBS|AVAS|NVHOrbit)\b'
+EMPTY_TREE=4b825dc642cb6eb9a060e54bf8d69288fbee4904
+
+while read -r local_ref local_sha remote_ref remote_sha; do
+  [ -z "$local_sha" ] && continue
+  base="${remote_sha:-$EMPTY_TREE}"
+  if [ "$base" = "0000000000000000000000000000000000000000" ]; then
+    base="$EMPTY_TREE"
+  fi
+  if git diff "$base" "$local_sha" -- . ':(exclude)pnpm-lock.yaml' ':(exclude)*.map' ':(exclude)coverage/*' 2>/dev/null \
+       | grep -qniE "$PATTERN"; then
+    echo "❌ pre-push 拦截：推送范围检出工作相关内容（红线词）。已阻止推送，请清理后重试。"
+    echo "   （若是 base64/哈希误报，确认命中行后按 R31 口径排除生成物）"
+    exit 1
+  fi
+done
+exit 0
