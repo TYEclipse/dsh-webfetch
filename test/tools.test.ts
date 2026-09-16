@@ -16,7 +16,7 @@ describe('resolveConfig', () => {
       maxBytes: 1_500_000,
       maxChars: 50_000,
       maxRedirects: 3,
-      userAgent: 'dsh-webfetch/0.3 (DeepSeek Harness plugin)',
+      userAgent: 'dsh-webfetch/0.4 (DeepSeek Harness plugin)',
       proxy: { httpProxy: '', httpsProxy: '', noProxy: '' },
     })
   })
@@ -41,8 +41,8 @@ describe('resolveConfig', () => {
 describe('buildWebfetchTools', () => {
   const tools = buildWebfetchTools(resolveConfig({}))
 
-  it('exposes all four tools under their canonical names', () => {
-    expect(Object.keys(tools).sort()).toEqual(['web_feed', 'web_fetch', 'web_headers', 'web_links'])
+  it('exposes all five tools under their canonical names', () => {
+    expect(Object.keys(tools).sort()).toEqual(['web_feed', 'web_fetch', 'web_headers', 'web_links', 'web_table'])
   })
 
   it('gives every tool a name, description, schema and executable', () => {
@@ -103,6 +103,30 @@ describe('buildWebfetchTools', () => {
     const textBlock = block[0] as { type: 'text'; text: string }
     expect(textBlock.text).toBe('feed: Example Feed\n1 entry from https://x.test/feed.xml\n1. Post — https://x.test/post\n   published: Mon, 01 Jan 2024 10:00:00 GMT\n   Short summary')
   })
+
+  it('renders a table result with header and rows, and a no-table note', () => {
+    const block = tools.web_table.output.render(
+      { url: 'https://x.test/report' },
+      {
+        url: 'https://x.test/report',
+        finalUrl: 'https://x.test/report',
+        status: 200,
+        tableCount: 1,
+        totalTables: 1,
+        truncated: false,
+        tables: [{ index: 1, caption: 'Q3', cols: 2, header: ['Item', 'Qty'], rows: [['Widget', '3']] }],
+      },
+    )
+    expect(block[0]).toEqual({
+      type: 'text',
+      text: '1 table(s) on https://x.test/report\ntable 1 — Q3 (2 columns)\n  [header] Item | Qty\n  Widget | 3',
+    })
+    const empty = tools.web_table.output.render(
+      { url: 'https://x.test/none' },
+      { url: 'https://x.test/none', finalUrl: 'https://x.test/none', status: 200, tableCount: 0, totalTables: 0, truncated: false, tables: [] },
+    )
+    expect(empty[0]).toEqual({ type: 'text', text: 'no tables found on https://x.test/none' })
+  })
 })
 
 describe('web_feed end-to-end (fixture server)', () => {
@@ -143,6 +167,14 @@ describe('web_feed end-to-end (fixture server)', () => {
       if (url.pathname === '/not-a-feed') {
         res.writeHead(200, { 'content-type': 'text/html' })
         res.end('<html><body><p>just a page</p></body></html>')
+        return
+      }
+      if (url.pathname === '/tables') {
+        res.writeHead(200, { 'content-type': 'text/html; charset=utf-8' })
+        res.end('<html><body><h1>Report</h1>'
+          + '<table><tr><th>Item</th><th>Qty</th></tr><tr><td>Widget</td><td>3</td></tr><tr><td>Gadget</td><td>5</td></tr></table>'
+          + '<table><tr><td>plain</td></tr></table>'
+          + '</body></html>')
         return
       }
       res.writeHead(404)
@@ -189,5 +221,54 @@ describe('web_feed end-to-end (fixture server)', () => {
 
   it('rejects an unsupported protocol before any fetch', async () => {
     await expect(feedRun('file:///etc/passwd')).rejects.toThrow(/only http and https/)
+  })
+
+  interface TableResult {
+    url: string
+    finalUrl: string
+    status: number
+    tableCount: number
+    totalTables: number
+    truncated: boolean
+    tables: Array<{ index: number; caption: string; cols: number; header: string[]; rows: string[][] }>
+  }
+  type TableArgs = { url: string; table?: number; maxTables?: number; maxRows?: number }
+  const tableRun = (url: string, args: Partial<TableArgs> = {}) => {
+    const tools = buildWebfetchTools(resolveConfig({}, {}))
+    const run = tools.web_table.execute as (args: TableArgs) => Promise<TableResult>
+    return run({ url, ...args })
+  }
+
+  const assertNoUndefined = (value: unknown, path = 'result'): void => {
+    if (value === undefined) throw new Error(`undefined value at ${path}`)
+    if (Array.isArray(value)) value.forEach((item, index) => assertNoUndefined(item, `${path}[${index}]`))
+    else if (value !== null && typeof value === 'object') {
+      for (const [key, inner] of Object.entries(value)) assertNoUndefined(inner, `${path}.${key}`)
+    }
+  }
+
+  it('extracts tables through the execute path with header detection', async () => {
+    const result = await tableRun(`${base}/tables`)
+    expect(result.status).toBe(200)
+    expect(result.tableCount).toBe(2)
+    expect(result.totalTables).toBe(2)
+    expect(result.truncated).toBe(false)
+    expect(result.tables).toEqual([
+      { index: 1, caption: '', cols: 2, header: ['Item', 'Qty'], rows: [['Widget', '3'], ['Gadget', '5']] },
+      { index: 2, caption: '', cols: 1, header: [], rows: [['plain']] },
+    ])
+  })
+
+  it('selects one table by position and rejects out-of-range positions', async () => {
+    const result = await tableRun(`${base}/tables`, { table: 2 })
+    expect(result.tableCount).toBe(1)
+    expect(result.totalTables).toBe(2)
+    expect(result.tables[0]?.rows).toEqual([['plain']])
+    await expect(tableRun(`${base}/tables`, { table: 9 })).rejects.toThrow(/table #9 not found/)
+    await expect(tableRun(`${base}/tables`, { table: 0 })).rejects.toThrow(/positive integer/)
+  })
+
+  it('keeps the web_table payload free of undefined values', async () => {
+    assertNoUndefined(await tableRun(`${base}/tables`))
   })
 })

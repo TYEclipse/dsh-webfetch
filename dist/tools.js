@@ -1,8 +1,9 @@
 /**
  * Tool definitions for dsh-webfetch: read-only web tools exposed to every
  * agent — web_fetch (URL to clean markdown/text), web_links (link
- * inventory of a page), web_feed (RSS/Atom entry listing) and web_headers
- * (HTTP status/headers/redirect chain without the body). All validate the
+ * inventory of a page), web_feed (RSS/Atom entry listing), web_headers
+ * (HTTP status/headers/redirect chain without the body) and web_table
+ * (HTML tables as structured rows). All validate the
  * URL, follow a bounded number of redirects, enforce a size cap and never
  * send credentials.
  *
@@ -10,6 +11,7 @@
  */
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { extractPage } from "./html.js";
+import { extractTables } from "./table.js";
 import { fetchFeed, fetchPage, resolveHref } from "./fetch.js";
 import { parseFeed, truncateText } from "./feed.js";
 import { probeUrl } from "./head.js";
@@ -75,7 +77,27 @@ function renderHeaders(value) {
         lines.push(`  ${key}: ${value}`);
     return lines.join('\n');
 }
-/** Build the two web tool definitions from the resolved config. */
+/** Compact text renderer for web_table results. */
+function renderTable(value) {
+    const result = value;
+    if (result.tableCount === 0)
+        return `no tables found on ${result.finalUrl}`;
+    const head = result.tableCount < result.totalTables
+        ? `${result.tableCount} of ${result.totalTables} table(s) on ${result.finalUrl}`
+        : `${result.tableCount} table(s) on ${result.finalUrl}`;
+    const lines = [head];
+    for (const table of result.tables) {
+        lines.push(`table ${table.index}${table.caption === '' ? '' : ` — ${table.caption}`} (${table.cols} column${table.cols === 1 ? '' : 's'})`);
+        if (table.header.length > 0)
+            lines.push(`  [header] ${table.header.join(' | ')}`);
+        for (const row of table.rows)
+            lines.push(`  ${row.join(' | ')}`);
+    }
+    if (result.truncated)
+        lines.push('[output capped — raise maxRows/maxTables or target one table with the `table` argument]');
+    return lines.join('\n');
+}
+/** Build the web tool definitions from the resolved config. */
 export function buildWebfetchTools(config) {
     const web_fetch = defineTool({
         name: 'web_fetch',
@@ -320,6 +342,78 @@ export function buildWebfetchTools(config) {
             };
         },
     });
-    return { web_fetch, web_links, web_feed, web_headers };
+    const web_table = defineTool({
+        name: 'web_table',
+        description: 'Extract the HTML tables of a web page as structured rows (arrays of cell strings) — the tables '
+            + 'counterpart of web_fetch, for spec sheets, pricing pages and comparison charts. Returns up to maxTables '
+            + 'tables, or one table by its 1-based position, each with up to maxRows data rows. The first row is '
+            + 'reported as the header when the page marks it (<thead> or all-<th> cells); colspan/rowspan are expanded '
+            + 'into a rectangular grid with the spanning text repeated in every covered slot; nested tables are '
+            + 'flattened into the containing cell. Read-only, sends no credentials or cookies.',
+        parameters: {
+            url: { type: 'string', required: true, description: 'Full http/https URL of the page to scan for tables.' },
+            table: { type: 'number', description: 'Return only the table at this 1-based position (default: list up to maxTables).' },
+            maxTables: { type: 'number', description: 'Max tables to return (1–20, default 5).' },
+            maxRows: { type: 'number', description: 'Max data rows per table (1–200, default 50).' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    url: { type: 'string', required: true },
+                    finalUrl: { type: 'string', required: true },
+                    status: { type: 'number', required: true },
+                    tableCount: { type: 'number', required: true },
+                    totalTables: { type: 'number', required: true },
+                    truncated: { type: 'boolean', required: true },
+                    tables: {
+                        type: 'array',
+                        required: true,
+                        items: {
+                            type: 'object',
+                            additionalProperties: false,
+                            properties: {
+                                index: { type: 'number', required: true },
+                                caption: { type: 'string', required: true },
+                                cols: { type: 'number', required: true },
+                                header: { type: 'array', required: true, items: { type: 'string' } },
+                                rows: { type: 'array', required: true, items: { type: 'array', items: { type: 'string' } } },
+                            },
+                        },
+                    },
+                },
+            },
+            render: (_args, value) => [{ type: 'text', text: renderTable(value) }],
+        },
+        async execute(args) {
+            const maxRows = Math.min(Math.max(args.maxRows ?? 50, 1), 200);
+            const maxTables = Math.min(Math.max(args.maxTables ?? 5, 1), 20);
+            if (args.table !== undefined && (!Number.isInteger(args.table) || args.table < 1)) {
+                throw new Error(`table must be a positive integer (1-based table position); got ${args.table}`);
+            }
+            const scanCap = args.table !== undefined ? Math.min(args.table, 50) : maxTables;
+            const fetched = await fetchPage(args.url, config);
+            const extracted = extractTables(fetched.body, { maxTables: scanCap, maxRows });
+            let tables = extracted.tables;
+            if (args.table !== undefined) {
+                const picked = tables.find((candidate) => candidate.index === args.table);
+                if (picked === undefined) {
+                    throw new Error(`table #${args.table} not found — the page has ${extracted.totalTables} table(s)`);
+                }
+                tables = [picked];
+            }
+            return {
+                url: args.url,
+                finalUrl: fetched.finalUrl,
+                status: fetched.status,
+                tableCount: tables.length,
+                totalTables: extracted.totalTables,
+                truncated: fetched.truncated || (args.table === undefined ? extracted.truncated : extracted.rowsCapped),
+                tables,
+            };
+        },
+    });
+    return { web_fetch, web_links, web_feed, web_headers, web_table };
 }
 //# sourceMappingURL=tools.js.map

@@ -1,8 +1,9 @@
 /**
  * Tool definitions for dsh-webfetch: read-only web tools exposed to every
  * agent — web_fetch (URL to clean markdown/text), web_links (link
- * inventory of a page), web_feed (RSS/Atom entry listing) and web_headers
- * (HTTP status/headers/redirect chain without the body). All validate the
+ * inventory of a page), web_feed (RSS/Atom entry listing), web_headers
+ * (HTTP status/headers/redirect chain without the body) and web_table
+ * (HTML tables as structured rows). All validate the
  * URL, follow a bounded number of redirects, enforce a size cap and never
  * send credentials.
  *
@@ -15,6 +16,7 @@ export interface ToolSet {
     web_links: ToolDefinition;
     web_feed: ToolDefinition;
     web_headers: ToolDefinition;
+    web_table: ToolDefinition;
 }
 /** One entry of a web_feed result (optional fields only present when known). */
 export interface FeedItem {
@@ -25,6 +27,6 @@ export interface FeedItem {
     summary?: string;
     content?: string;
 }
-/** Build the two web tool definitions from the resolved config. */
+/** Build the web tool definitions from the resolved config. */
 export declare function buildWebfetchTools(config: ResolvedConfig): ToolSet;
 //# sourceMappingURL=tools.d.ts.map
