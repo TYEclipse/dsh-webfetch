@@ -1,6 +1,6 @@
 # dsh-webfetch
 
-DeepSeek Harness（dsh）的网页阅读插件：给定 URL，抓取网页并提取干净的 Markdown / 纯文本正文，附链接清单、RSS/Atom 订阅源解析与 HTTP 头部探测。零运行时依赖，只读，不发送任何凭证。
+DeepSeek Harness（dsh）的网页阅读插件：给定 URL，抓取网页并提取干净的 Markdown / 纯文本正文，附链接清单、RSS/Atom 订阅源解析、HTTP 头部探测与网页表格结构化提取。零运行时依赖，只读，不发送任何凭证。
 
 [English](README.md) | 中文
 
@@ -63,15 +63,39 @@ agent: web_feed("https://blog.example.com/feed.xml", maxItems: 5)
 
 返回 `{ url, finalUrl, status, statusText, method, headers, redirects }`，其中 `headers` 为完整响应头表（键名小写），`redirects` 逐跳记录 `{ url, status, location }`。
 
+### `web_table`
+
+把页面上的 HTML 表格提取为**结构化行**——`web_fetch` 的表格版：定价页、参数表、对比表里锁在 `<table>` 标记中的数据，直接以「行的数组（每行是单元格字符串数组）」返回，而不是揉成一段散文。首行为表头时（`<thead>` 或全 `<th>`）单独报告；`colspan` / `rowspan` 展开为矩形网格、跨格文本填充到每个覆盖格（每行自洽）；嵌套表格拍平进所在单元格文本；单元格实体解码、空白归一、超 200 字符截断。
+
+| 参数        | 类型              | 默认值 | 说明                                       |
+| ----------- | ----------------- | ------ | ------------------------------------------ |
+| `url`       | string（必填）    | —      | 待扫描表格的完整 http/https 地址。         |
+| `table`     | number            | —      | 只返回第 N 个表格（1 起）。                |
+| `maxTables` | number            | `5`    | 最多返回几个表格（1–20）。                 |
+| `maxRows`   | number            | `50`   | 每个表格最多返回多少行数据（1–200）。      |
+
+返回 `{ url, finalUrl, status, tableCount, totalTables, truncated, tables }`，每个表格为 `{ index, caption, cols, header, rows }`——`rows` 为行的数组，每行是单元格字符串数组。无单元格的空表格忽略；`totalTables` 统计页面上所有非空表格。
+
+```text
+user: 把定价页的档位对比表拉出来
+agent: web_table("https://example.com/pricing")
+  → 1 table(s) on https://example.com/pricing
+    table 1 (3 columns)
+      [header] Plan | Monthly | Yearly
+      Free | $0 | $0
+      Pro | $12 | $115
+      Team | $30 | $288
+```
+
 ## 安装
 
 ```sh
 dsh plugin --profile web add github:TYEclipse/dsh-webfetch
 # 或指定已发布版本：
-dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.3.0
+dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.4.0
 ```
 
-重启会话后模型即可使用这四个工具。
+重启会话后模型即可使用这五个工具。
 
 ## 配置（均可选，以下为默认值）
 
@@ -117,7 +141,7 @@ plugins:
 ```sh
 pnpm install
 pnpm build      # tsc
-pnpm test       # vitest — 97 个测试，全程离线（本地 fixture 服务器）
+pnpm test       # vitest — 125 个测试，全程离线（本地 fixture 服务器）
 pnpm lint       # oxlint src test
 ```
 

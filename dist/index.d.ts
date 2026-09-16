@@ -1,7 +1,7 @@
 /**
  * dsh-webfetch — web page reader for DeepSeek Harness.
  *
- * Four read-only tools, zero runtime dependencies (node built-ins + global
+ * Five read-only tools, zero runtime dependencies (node built-ins + global
  * fetch only):
  *   web_fetch    — fetch a URL and extract clean markdown or plain text
  *                  (headings, links, lists, code fences; scripts and styling
@@ -13,6 +13,9 @@
  *   web_headers  — inspect the HTTP status, response headers and redirect
  *                  chain of a URL without downloading the body (HEAD first,
  *                  automatic GET fallback)
+ *   web_table    — extract the HTML tables of a page as structured rows
+ *                  (header detection, colspan/rowspan grid expansion,
+ *                  row/table caps)
  *
  * Safety model: http/https only, embedded URL credentials rejected, no
  * cookies or credentials sent, redirect hops limited, body size capped,
@@ -47,6 +50,8 @@ export interface Config {
     /** NO_PROXY bypass list; default: NO_PROXY env. */
     noProxy?: string;
 }
+/** Single source of truth for the default User-Agent (schema + resolveConfig). */
+export declare const DEFAULT_USER_AGENT = "dsh-webfetch/0.4 (DeepSeek Harness plugin)";
 export declare const Config: z<Config>;
 /** Config with every default resolved (all fields guaranteed). */
 export interface ResolvedConfig {

@@ -1,7 +1,7 @@
 /**
  * dsh-webfetch — web page reader for DeepSeek Harness.
  *
- * Four read-only tools, zero runtime dependencies (node built-ins + global
+ * Five read-only tools, zero runtime dependencies (node built-ins + global
  * fetch only):
  *   web_fetch    — fetch a URL and extract clean markdown or plain text
  *                  (headings, links, lists, code fences; scripts and styling
@@ -13,6 +13,9 @@
  *   web_headers  — inspect the HTTP status, response headers and redirect
  *                  chain of a URL without downloading the body (HEAD first,
  *                  automatic GET fallback)
+ *   web_table    — extract the HTML tables of a page as structured rows
+ *                  (header detection, colspan/rowspan grid expansion,
+ *                  row/table caps)
  *
  * Safety model: http/https only, embedded URL credentials rejected, no
  * cookies or credentials sent, redirect hops limited, body size capped,
@@ -28,12 +31,14 @@ import { buildWebfetchTools } from "./tools.js";
 export const name = 'dsh-webfetch';
 /** Services required before tool registration can start. */
 export const inject = ['agents', 'tools'];
+/** Single source of truth for the default User-Agent (schema + resolveConfig). */
+export const DEFAULT_USER_AGENT = 'dsh-webfetch/0.4 (DeepSeek Harness plugin)';
 export const Config = z.object({
     timeoutMs: z.number().min(1_000).max(60_000).default(10_000),
     maxBytes: z.number().min(10_000).max(5_000_000).default(1_500_000),
     maxChars: z.number().min(1_000).max(200_000).default(50_000),
     maxRedirects: z.number().step(1).min(0).max(10).default(3),
-    userAgent: z.string().max(200).default('dsh-webfetch/0.3 (DeepSeek Harness plugin)'),
+    userAgent: z.string().max(200).default(DEFAULT_USER_AGENT),
     httpProxy: z.string().max(500),
     httpsProxy: z.string().max(500),
     noProxy: z.string().max(2000),
@@ -45,7 +50,7 @@ export function resolveConfig(config, env = process.env) {
         maxBytes: config.maxBytes ?? 1_500_000,
         maxChars: config.maxChars ?? 50_000,
         maxRedirects: config.maxRedirects ?? 3,
-        userAgent: config.userAgent ?? 'dsh-webfetch/0.3 (DeepSeek Harness plugin)',
+        userAgent: config.userAgent ?? DEFAULT_USER_AGENT,
         proxy: resolveProxyConf(env, { httpProxy: config.httpProxy, httpsProxy: config.httpsProxy, noProxy: config.noProxy }),
     };
 }
