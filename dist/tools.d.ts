@@ -2,8 +2,10 @@
  * Tool definitions for dsh-webfetch: read-only web tools exposed to every
  * agent — web_fetch (URL to clean markdown/text), web_links (link
  * inventory of a page), web_feed (RSS/Atom entry listing), web_headers
- * (HTTP status/headers/redirect chain without the body) and web_table
- * (HTML tables as structured rows). All validate the
+ * (HTTP status/headers/redirect chain without the body), web_table
+ * (HTML tables as structured rows) and web_meta (the page's own metadata:
+ * title, description, canonical, hreflang alternates, Open Graph, Twitter
+ * cards, feed autodiscovery, icons and JSON-LD). All validate the
  * URL, follow a bounded number of redirects, enforce a size cap and never
  * send credentials.
  *
@@ -17,6 +19,7 @@ export interface ToolSet {
     web_feed: ToolDefinition;
     web_headers: ToolDefinition;
     web_table: ToolDefinition;
+    web_meta: ToolDefinition;
 }
 /** One entry of a web_feed result (optional fields only present when known). */
 export interface FeedItem {

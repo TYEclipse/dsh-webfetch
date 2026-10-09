@@ -2,8 +2,10 @@
  * Tool definitions for dsh-webfetch: read-only web tools exposed to every
  * agent — web_fetch (URL to clean markdown/text), web_links (link
  * inventory of a page), web_feed (RSS/Atom entry listing), web_headers
- * (HTTP status/headers/redirect chain without the body) and web_table
- * (HTML tables as structured rows). All validate the
+ * (HTTP status/headers/redirect chain without the body), web_table
+ * (HTML tables as structured rows) and web_meta (the page's own metadata:
+ * title, description, canonical, hreflang alternates, Open Graph, Twitter
+ * cards, feed autodiscovery, icons and JSON-LD). All validate the
  * URL, follow a bounded number of redirects, enforce a size cap and never
  * send credentials.
  *
@@ -12,6 +14,7 @@
 import { defineTool } from '@deepseek-ai/dsh-tools';
 import { extractPage } from "./html.js";
 import { extractTables } from "./table.js";
+import { extractMeta, MAX_JSON_LD_BLOCKS } from "./meta.js";
 import { fetchFeed, fetchPage, resolveHref } from "./fetch.js";
 import { parseFeed, truncateText } from "./feed.js";
 import { probeUrl } from "./head.js";
@@ -95,6 +98,57 @@ function renderTable(value) {
     }
     if (result.truncated)
         lines.push('[output capped — raise maxRows/maxTables or target one table with the `table` argument]');
+    return lines.join('\n');
+}
+/** Compact text renderer for web_meta results. */
+function renderMeta(value) {
+    const result = value;
+    const redirectNote = result.url !== result.finalUrl ? ` (redirected from ${result.url})` : '';
+    const lines = [`HTTP ${result.status}${redirectNote} — metadata of ${result.finalUrl}`];
+    const field = (label, text) => {
+        if (text !== '')
+            lines.push(`${label}: ${text}`);
+    };
+    field('title', result.title);
+    field('description', result.description);
+    field('canonical', result.canonical);
+    if (result.lang !== '' || result.charset !== '') {
+        lines.push(`lang: ${result.lang === '' ? '(unset)' : result.lang} — charset: ${result.charset === '' ? '(unset)' : result.charset}`);
+    }
+    field('robots', result.robots);
+    field('author', result.author);
+    const group = (label, entries) => {
+        if (entries.length === 0)
+            return;
+        lines.push(`${label} (${entries.length}):`);
+        for (const entry of entries)
+            lines.push(`  ${entry.name} — ${entry.content}`);
+    };
+    group('open graph', result.openGraph);
+    group('twitter', result.twitter);
+    if (result.alternates.length > 0) {
+        lines.push(`hreflang alternates (${result.alternates.length}):`);
+        for (const alternate of result.alternates)
+            lines.push(`  ${alternate.hreflang} — ${alternate.href}`);
+    }
+    if (result.feeds.length > 0) {
+        lines.push(`feeds (${result.feeds.length}):`);
+        for (const feed of result.feeds) {
+            lines.push(`  ${feed.type}${feed.title === '' ? '' : ` — ${feed.title}`} — ${feed.href}`);
+        }
+    }
+    if (result.icons.length > 0) {
+        lines.push(`icons (${result.icons.length}):`);
+        for (const icon of result.icons)
+            lines.push(`  ${icon}`);
+    }
+    const invalid = result.jsonLdInvalid > 0 ? ` (${result.jsonLdInvalid} invalid)` : '';
+    lines.push(`json-ld: ${result.jsonLdCount} block(s)${invalid}`);
+    for (const block of result.jsonLd) {
+        lines.push(block.valid
+            ? `  ${block.index}. ${block.types.length === 0 ? '(no @type)' : block.types.join(', ')}`
+            : `  ${block.index}. invalid — ${block.error ?? 'unknown error'}`);
+    }
     return lines.join('\n');
 }
 /** Build the web tool definitions from the resolved config. */
@@ -414,6 +468,133 @@ export function buildWebfetchTools(config) {
             };
         },
     });
-    return { web_fetch, web_links, web_feed, web_headers, web_table };
+    const web_meta = defineTool({
+        name: 'web_meta',
+        description: 'Read what a web page says about itself: title, description, canonical URL, language, charset, '
+            + 'robots policy, author, Open Graph and article properties, Twitter card tags, hreflang alternates, feed '
+            + 'autodiscovery links, icons and JSON-LD blocks (with their @type names). The metadata counterpart of '
+            + 'web_fetch: use it to identify, classify or deduplicate a page, or to discover its feed and language '
+            + 'variants without reading the whole body. Values are reported as written (entity-decoded, '
+            + 'whitespace-normalized, 1000-char cap); canonical/alternate/feed/icon URLs are resolved to absolute. '
+            + 'A JSON-LD block that does not parse is reported as invalid with the parser message instead of being '
+            + 'dropped. Read-only, sends no credentials or cookies.',
+        parameters: {
+            url: { type: 'string', required: true, description: 'Full http/https URL of the page to inspect.' },
+            maxJsonLd: { type: 'number', description: 'Max JSON-LD blocks to return (1–20, default 10).' },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    url: { type: 'string', required: true },
+                    finalUrl: { type: 'string', required: true },
+                    status: { type: 'number', required: true },
+                    title: { type: 'string', required: true },
+                    description: { type: 'string', required: true },
+                    canonical: { type: 'string', required: true },
+                    lang: { type: 'string', required: true },
+                    charset: { type: 'string', required: true },
+                    robots: { type: 'string', required: true },
+                    author: { type: 'string', required: true },
+                    openGraph: {
+                        type: 'array',
+                        required: true,
+                        items: {
+                            type: 'object',
+                            additionalProperties: false,
+                            properties: {
+                                name: { type: 'string', required: true },
+                                content: { type: 'string', required: true },
+                            },
+                        },
+                    },
+                    twitter: {
+                        type: 'array',
+                        required: true,
+                        items: {
+                            type: 'object',
+                            additionalProperties: false,
+                            properties: {
+                                name: { type: 'string', required: true },
+                                content: { type: 'string', required: true },
+                            },
+                        },
+                    },
+                    alternates: {
+                        type: 'array',
+                        required: true,
+                        items: {
+                            type: 'object',
+                            additionalProperties: false,
+                            properties: {
+                                hreflang: { type: 'string', required: true },
+                                href: { type: 'string', required: true },
+                            },
+                        },
+                    },
+                    feeds: {
+                        type: 'array',
+                        required: true,
+                        items: {
+                            type: 'object',
+                            additionalProperties: false,
+                            properties: {
+                                type: { type: 'string', required: true },
+                                title: { type: 'string', required: true },
+                                href: { type: 'string', required: true },
+                            },
+                        },
+                    },
+                    icons: { type: 'array', required: true, items: { type: 'string' } },
+                    jsonLd: {
+                        type: 'array',
+                        required: true,
+                        items: {
+                            type: 'object',
+                            additionalProperties: false,
+                            properties: {
+                                index: { type: 'number', required: true },
+                                valid: { type: 'boolean', required: true },
+                                types: { type: 'array', required: true, items: { type: 'string' } },
+                                error: { type: 'string' },
+                            },
+                        },
+                    },
+                    jsonLdCount: { type: 'number', required: true },
+                    jsonLdInvalid: { type: 'number', required: true },
+                    truncated: { type: 'boolean', required: true },
+                },
+            },
+            render: (_args, value) => [{ type: 'text', text: renderMeta(value) }],
+        },
+        async execute(args) {
+            const maxJsonLd = Math.min(Math.max(args.maxJsonLd ?? MAX_JSON_LD_BLOCKS, 1), 20);
+            const fetched = await fetchPage(args.url, config);
+            const meta = extractMeta(fetched.body, { maxJsonLd });
+            return {
+                url: args.url,
+                finalUrl: fetched.finalUrl,
+                status: fetched.status,
+                title: meta.title,
+                description: meta.description,
+                canonical: resolveHref(meta.canonical, fetched.finalUrl),
+                lang: meta.lang,
+                charset: meta.charset,
+                robots: meta.robots,
+                author: meta.author,
+                openGraph: meta.openGraph,
+                twitter: meta.twitter,
+                alternates: meta.alternates.map((alternate) => ({ hreflang: alternate.hreflang, href: resolveHref(alternate.href, fetched.finalUrl) })),
+                feeds: meta.feeds.map((feed) => ({ type: feed.type, title: feed.title, href: resolveHref(feed.href, fetched.finalUrl) })),
+                icons: meta.icons.map((icon) => resolveHref(icon, fetched.finalUrl)).filter((icon) => icon !== ''),
+                jsonLd: meta.jsonLd,
+                jsonLdCount: meta.jsonLdCount,
+                jsonLdInvalid: meta.jsonLdInvalid,
+                truncated: fetched.truncated || meta.truncated,
+            };
+        },
+    });
+    return { web_fetch, web_links, web_feed, web_headers, web_table, web_meta };
 }
 //# sourceMappingURL=tools.js.map

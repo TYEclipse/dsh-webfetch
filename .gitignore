@@ -3,3 +3,7 @@ node_modules/
 .DS_Store
 dist/*.map
 coverage/
+
+# Python bytecode from the oracle scripts
+__pycache__/
+*.pyc

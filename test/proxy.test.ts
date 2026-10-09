@@ -2,6 +2,8 @@
  * Tests for the zero-dependency proxy layer: NO_PROXY matching, proxy
  * selection, response-head/framing parsing, and end-to-end proxied http
  * fetching against a local fake proxy fixture (no external network).
+ *
+ * ORACLE: test/oracle/anchors.py
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'

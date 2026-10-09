@@ -2,6 +2,8 @@
  * Integration tests for the HTTP layer: a local node:http fixture server
  * exercises fetching, redirects, size caps, content-type gating, status
  * errors and charset handling — no external network required.
+ *
+ * ORACLE: test/oracle/anchors.py
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'

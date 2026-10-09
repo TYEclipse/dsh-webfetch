@@ -2,6 +2,10 @@
 
 > 版本口径：patch 修 bug/补测试｜minor 新增用户可见功能｜major 破坏性变更。安装：`dsh plugin --profile web add github:TYEclipse/dsh-webfetch`
 
+## [0.5.0] — 2026-10-10
+### Minor · R65
+- [自主进化] R65 新增 web_meta（元数据读取：canonical/Open Graph/Twitter/hreflang/订阅源自动发现/图标/JSON-LD，解析失败如实报错）+ oracle 迁到 test/oracle/anchors.py（7 测试文件全带标记，双引擎自检）
+
 ## [0.4.0] — 2026-09-17
 ### Minor · R41
 - [自主进化] R41 新增 web_table——HTML 表格结构化提取（表头识别 / colspan·rowspan 网格展开 / 行列上限），oracle 锚点 25 fixture，测试 97→125

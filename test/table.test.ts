@@ -1,12 +1,15 @@
 /**
  * Tests for src/table.ts — HTML table extraction.
  *
- * Expected values are anchored to the independent oracle in
- * `test/anchors-table.py` (stdlib html.parser implementation of the same
- * documented semantics; a different parsing engine than the TypeScript
- * walker, so agreement is meaningful). The `rowsCapped` field is derived
- * metadata not emitted by the oracle: false everywhere except the row-cap
- * fixture. To regenerate: `python3 test/anchors-table.py`.
+ * ORACLE: test/oracle/anchors.py
+ *
+ * Expected values are anchored to the independent oracles in
+ * `test/oracle/` — `anchors_table.py` (stdlib html.parser implementation of
+ * the same documented semantics; a different parsing engine than the
+ * TypeScript walker, so agreement is meaningful) plus the cross-checks in
+ * `anchors.py`. The `rowsCapped` field is derived metadata not emitted by the
+ * oracle: false everywhere except the row-cap fixture.
+ * To regenerate: `python3 test/oracle/anchors.py`.
  */
 
 import { describe, expect, it } from 'vitest'

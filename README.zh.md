@@ -1,6 +1,6 @@
 # dsh-webfetch
 
-DeepSeek Harness（dsh）的网页阅读插件：给定 URL，抓取网页并提取干净的 Markdown / 纯文本正文，附链接清单、RSS/Atom 订阅源解析、HTTP 头部探测与网页表格结构化提取。零运行时依赖，只读，不发送任何凭证。
+DeepSeek Harness（dsh）的网页阅读插件：给定 URL，抓取网页并提取干净的 Markdown / 纯文本正文，附链接清单、RSS/Atom 订阅源解析、HTTP 头部探测、网页表格结构化提取与页面元数据读取。零运行时依赖，只读，不发送任何凭证。
 
 [English](README.md) | 中文
 
@@ -87,15 +87,43 @@ agent: web_table("https://example.com/pricing")
       Team | $30 | $288
 ```
 
+### `web_meta`
+
+读取页面**对自己的描述**：标题、描述、canonical 地址、语言、字符集、robots 策略、作者、Open Graph 与 `article:*` 属性、Twitter 卡片、hreflang 多语言版本、订阅源自动发现链接、图标与 JSON-LD 块。它是 `web_fetch` 的「元数据版」——用于识别、归类、去重页面，或在不必读正文的前提下发现页面的订阅源与语言版本。
+
+| 参数        | 类型              | 默认值 | 说明                              |
+| ----------- | ----------------- | ------ | --------------------------------- |
+| `url`       | string（必填）    | —      | 待读取的完整 http/https 地址。    |
+| `maxJsonLd` | number            | `10`   | 最多返回几个 JSON-LD 块（1–20）。 |
+
+返回 `{ url, finalUrl, status, title, description, canonical, lang, charset, robots, author, openGraph, twitter, alternates, feeds, icons, jsonLd, jsonLdCount, jsonLdInvalid, truncated }`。取值按原文汇报（实体解码、空白归一、单个值 1000 字符截断）；`canonical`、多语言、订阅源与图标地址已解析为绝对地址。Open Graph 与 Twitter 以有序的 `{ name, content }` 对返回——重复属性（多个 `og:image`）不会丢，完全相同的条目去重。解析失败的 JSON-LD 块如实报 `valid: false` 并附解析器信息、计入 `jsonLdInvalid`，绝不静默丢弃。
+
+```text
+user: 这个页面是英文原版吗？它有订阅源吗？
+agent: web_meta("https://example.com/products/widget")
+  → HTTP 200 — metadata of https://example.com/products/widget
+    title: Widget — Example
+    canonical: https://example.com/products/widget
+    lang: en-GB — charset: utf-8
+    hreflang alternates (2):
+      en — https://example.com/en/widget
+      zh-Hans — https://example.com/zh/widget
+    feeds (1):
+      application/rss+xml — Blog feed — https://example.com/feed.xml
+    json-ld: 2 block(s)
+      1. Product
+      2. WebPage, Organization
+```
+
 ## 安装
 
 ```sh
 dsh plugin --profile web add github:TYEclipse/dsh-webfetch
 # 或指定已发布版本：
-dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.4.0
+dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.5.0
 ```
 
-重启会话后模型即可使用这五个工具。
+重启会话后模型即可使用这六个工具。
 
 ## 配置（均可选，以下为默认值）
 

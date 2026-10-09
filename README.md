@@ -1,11 +1,11 @@
 # dsh-webfetch
 
-> 为 DeepSeek Harness 智能体装上「阅读器」：给定 URL，抓取网页并提取干净的 Markdown / 纯文本正文，附带链接清单、RSS/Atom 订阅源解析与网页表格结构化提取。零运行时依赖，只读，不发送任何凭证。
+> 为 DeepSeek Harness 智能体装上「阅读器」：给定 URL，抓取网页并提取干净的 Markdown / 纯文本正文，附带链接清单、RSS/Atom 订阅源解析、HTTP 头部探测、网页表格结构化提取与页面元数据（canonical / Open Graph / hreflang / JSON-LD）读取。零运行时依赖，只读，不发送任何凭证。
 > [English](#english) | 中文简介
 
 A web page reader plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`).
 `dsh` agents can search, but until now they could not *read the page behind a URL*.
-`dsh-webfetch` closes that gap with five read-only tools and **zero runtime dependencies** (Node built-ins + global `fetch` only).
+`dsh-webfetch` closes that gap with six read-only tools and **zero runtime dependencies** (Node built-ins + global `fetch` only).
 
 ## Tools
 
@@ -132,12 +132,57 @@ agent: web_table("https://example.com/pricing")
       Team | $30 | $288
 ```
 
+### `web_meta`
+
+Read what a page **says about itself**: title, description, canonical URL,
+language, charset, robots policy, author, Open Graph and `article:*`
+properties, Twitter card tags, hreflang alternates, feed autodiscovery links,
+icons and JSON-LD blocks. The metadata counterpart of `web_fetch` — use it to
+identify, classify or deduplicate a page, or to discover its feed and language
+variants without reading the whole body.
+
+| Parameter   | Type              | Default | Description                                          |
+| ----------- | ----------------- | ------- | ---------------------------------------------------- |
+| `url`       | string (required) | —       | Full http/https URL of the page to inspect.          |
+| `maxJsonLd` | number            | `10`    | Max JSON-LD blocks to return (1–20).                 |
+
+Returns `{ url, finalUrl, status, title, description, canonical, lang, charset,
+robots, author, openGraph, twitter, alternates, feeds, icons, jsonLd,
+jsonLdCount, jsonLdInvalid, truncated }`. Values are reported as written
+(entity-decoded, whitespace-normalized, 1000-character cap); `canonical`,
+alternate, feed and icon URLs are resolved to absolute. Open Graph and Twitter
+entries are ordered `{ name, content }` pairs, so repeated properties (several
+`og:image`) survive and exact duplicates collapse. A JSON-LD block that does
+not parse is reported as `valid: false` with the parser message and counted in
+`jsonLdInvalid` — never silently dropped.
+
+```text
+user: is this page the canonical English version, and does it have a feed?
+agent: web_meta("https://example.com/products/widget")
+  → HTTP 200 — metadata of https://example.com/products/widget
+    title: Widget — Example
+    canonical: https://example.com/products/widget
+    lang: en-GB — charset: utf-8
+    open graph (3):
+      og:title — Widget
+      og:image — https://example.com/img/hero.png
+      og:type — product
+    hreflang alternates (2):
+      en — https://example.com/en/widget
+      zh-Hans — https://example.com/zh/widget
+    feeds (1):
+      application/rss+xml — Blog feed — https://example.com/feed.xml
+    json-ld: 2 block(s)
+      1. Product
+      2. WebPage, Organization
+```
+
 ## Install
 
 ```sh
 dsh plugin --profile web add github:TYEclipse/dsh-webfetch
 # or a pinned release:
-dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.4.0
+dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.5.0
 ```
 
 Restart your agent session and the tools are available to the model.
@@ -199,7 +244,7 @@ Proxy credentials embedded in the proxy URL are sent as
 ```sh
 pnpm install
 pnpm build      # tsc
-pnpm test       # vitest — 125 tests, fully offline (local fixture servers)
+pnpm test       # vitest — 145 tests, fully offline (local fixture servers)
 pnpm lint       # oxlint src test
 ```
 
@@ -211,4 +256,4 @@ pnpm lint       # oxlint src test
 
 ## 中文简介
 
-dsh-webfetch 是 DeepSeek Harness 的网页阅读插件：智能体拿到 URL 后可以直接抓取页面并提取干净的 Markdown 或纯文本（保留标题、链接、列表与代码块，剥离脚本/样式），`web_links` 可列出页面全部链接（解析为绝对地址、去重、限量），`web_feed` 可解析 RSS 2.0 / Atom 订阅源为条目清单（标题/链接/发布时间/作者/摘要/正文，处理 CDATA、HTML 实体与相对链接），`web_headers` 可用 HEAD 请求探测任意 URL 的 HTTP 状态码、响应头与重定向链而不下载正文（服务器不支持 HEAD 时自动回退 GET，非 2xx 状态照常报告），`web_table` 可把页面上的 HTML 表格提取为结构化行（表头识别、colspan/rowspan 网格展开、行列上限，定价页/参数表/对比表直接可用）。零运行时依赖、只读、不发送凭证；http/https 协议限定、超时/重定向/体积/文本长度全部有上限，字符集自动识别（Content-Type → XML 声明/meta → UTF-8）；内置零依赖 http 代理支持（CONNECT 隧道 + NO_PROXY 白名单，自动读环境变量），在必须走代理的网络也能正常工作。与内置搜索互补：搜索给线索，webfetch 读正文，web_headers 读前诊断，web_table 提数据。
+dsh-webfetch 是 DeepSeek Harness 的网页阅读插件：智能体拿到 URL 后可以直接抓取页面并提取干净的 Markdown 或纯文本（保留标题、链接、列表与代码块，剥离脚本/样式），`web_links` 可列出页面全部链接（解析为绝对地址、去重、限量），`web_feed` 可解析 RSS 2.0 / Atom 订阅源为条目清单（标题/链接/发布时间/作者/摘要/正文，处理 CDATA、HTML 实体与相对链接），`web_headers` 可用 HEAD 请求探测任意 URL 的 HTTP 状态码、响应头与重定向链而不下载正文（服务器不支持 HEAD 时自动回退 GET，非 2xx 状态照常报告），`web_table` 可把页面上的 HTML 表格提取为结构化行（表头识别、colspan/rowspan 网格展开、行列上限，定价页/参数表/对比表直接可用），`web_meta` 可读取页面自身的元数据（标题、描述、canonical、语言与字符集、robots、作者、Open Graph/article/Twitter 属性、hreflang 多语言版本、订阅源自动发现、图标与 JSON-LD 的 @type 摘要；解析失败的 JSON-LD 如实报错而不丢弃）。零运行时依赖、只读、不发送凭证；http/https 协议限定、超时/重定向/体积/文本长度全部有上限，字符集自动识别（Content-Type → XML 声明/meta → UTF-8）；内置零依赖 http 代理支持（CONNECT 隧道 + NO_PROXY 白名单，自动读环境变量），在必须走代理的网络也能正常工作。与内置搜索互补：搜索给线索，webfetch 读正文，web_meta 读身份，web_headers 读前诊断，web_table 提数据。

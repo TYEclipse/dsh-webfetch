@@ -3,6 +3,8 @@
  * automatic HEAD→GET fallback, redirect chains and limits, non-2xx
  * reporting, timeout handling, and HEAD through a local http proxy
  * fixture — no external network required.
+ *
+ * ORACLE: test/oracle/anchors.py
  */
 
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'

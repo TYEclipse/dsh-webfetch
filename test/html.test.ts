@@ -1,6 +1,8 @@
 /**
  * Offline unit tests for the HTML-to-text extractor: entities, tag skipping,
  * markdown constructs, links, truncation and whitespace normalization.
+ *
+ * ORACLE: test/oracle/anchors.py
  */
 
 import { describe, expect, it } from 'vitest'
