@@ -18,7 +18,7 @@ describe('resolveConfig', () => {
       maxBytes: 1_500_000,
       maxChars: 50_000,
       maxRedirects: 3,
-      userAgent: 'dsh-webfetch/0.5 (DeepSeek Harness plugin)',
+      userAgent: 'dsh-webfetch/0.6 (DeepSeek Harness plugin)',
       proxy: { httpProxy: '', httpsProxy: '', noProxy: '' },
     })
   })
@@ -43,8 +43,8 @@ describe('resolveConfig', () => {
 describe('buildWebfetchTools', () => {
   const tools = buildWebfetchTools(resolveConfig({}))
 
-  it('exposes all six tools under their canonical names', () => {
-    expect(Object.keys(tools).sort()).toEqual(['web_feed', 'web_fetch', 'web_headers', 'web_links', 'web_meta', 'web_table'])
+  it('exposes all seven tools under their canonical names', () => {
+    expect(Object.keys(tools).sort()).toEqual(['web_feed', 'web_fetch', 'web_headers', 'web_links', 'web_meta', 'web_sitemap', 'web_table'])
   })
 
   it('gives every tool a name, description, schema and executable', () => {

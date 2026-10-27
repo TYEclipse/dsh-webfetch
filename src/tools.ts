@@ -3,11 +3,12 @@
  * agent — web_fetch (URL to clean markdown/text), web_links (link
  * inventory of a page), web_feed (RSS/Atom entry listing), web_headers
  * (HTTP status/headers/redirect chain without the body), web_table
- * (HTML tables as structured rows) and web_meta (the page's own metadata:
+ * (HTML tables as structured rows), web_meta (the page's own metadata:
  * title, description, canonical, hreflang alternates, Open Graph, Twitter
- * cards, feed autodiscovery, icons and JSON-LD). All validate the
- * URL, follow a bounded number of redirects, enforce a size cap and never
- * send credentials.
+ * cards, feed autodiscovery, icons and JSON-LD) and web_sitemap (site-level
+ * URL inventory from robots.txt + sitemap.xml, following sitemap indexes).
+ * All validate the URL, follow a bounded number of redirects, enforce a size
+ * cap and never send credentials.
  *
  * @module dsh-webfetch/tools
  */
@@ -16,8 +17,12 @@ import { defineTool, type ToolDefinition } from '@deepseek-ai/dsh-tools'
 import { extractPage, type ExtractedPage } from './html.ts'
 import { extractTables, type ExtractedTable } from './table.ts'
 import { extractMeta, MAX_JSON_LD_BLOCKS, type ExtractedMeta, type JsonLdBlock } from './meta.ts'
-import { fetchFeed, fetchPage, resolveHref, type FetchedPage, type FetchConfig } from './fetch.ts'
+import { assertHttpUrl, fetchFeed, fetchPage, resolveHref, type FetchedPage, type FetchConfig } from './fetch.ts'
 import { parseFeed, truncateText } from './feed.ts'
+import {
+  DEFAULT_MAX_SITEMAPS, DEFAULT_MAX_URLS, MAX_SITEMAP_DEPTH, MAX_SITEMAPS_LIMIT, MAX_URLS_LIMIT,
+  isSitemapLike, parseRobots, parseSitemap,
+} from './sitemap.ts'
 import { probeUrl, type HeaderProbe, type RedirectHop } from './head.ts'
 import type { ResolvedConfig } from './index.ts'
 
@@ -28,6 +33,24 @@ export interface ToolSet {
   web_headers: ToolDefinition
   web_table: ToolDefinition
   web_meta: ToolDefinition
+  web_sitemap: ToolDefinition
+}
+
+/** One fetched sitemap document, as reported by web_sitemap. */
+export interface SitemapReport {
+  url: string
+  kind: 'index' | 'urlset' | 'gzip' | 'error'
+  status: number
+  entryCount: number
+  error: string
+}
+
+/** One URL of a web_sitemap result (optional fields only present when known). */
+export interface SitemapUrlItem {
+  loc: string
+  lastmod?: string
+  changefreq?: string
+  priority?: number
 }
 
 /** One entry of a web_feed result (optional fields only present when known). */
@@ -179,6 +202,42 @@ function renderMeta(value: unknown): string {
       ? `  ${block.index}. ${block.types.length === 0 ? '(no @type)' : block.types.join(', ')}`
       : `  ${block.index}. invalid — ${block.error ?? 'unknown error'}`)
   }
+  return lines.join('\n')
+}
+
+/** Compact text renderer for web_sitemap results. */
+function renderSitemap(value: unknown): string {
+  const result = value as {
+    url: string
+    robotsUrl: string
+    robotsStatus: number
+    sitemapCount: number
+    discovered: number
+    urlCount: number
+    truncated: boolean
+    sitemaps: SitemapReport[]
+    urls: SitemapUrlItem[]
+  }
+  const lines: string[] = []
+  if (result.robotsUrl === '') lines.push(`sitemap inventory of ${result.url} (direct sitemap input)`)
+  else lines.push(`sitemap inventory of ${result.url} — robots ${result.robotsStatus === 0 ? 'unavailable' : `HTTP ${result.robotsStatus}`} (${result.robotsUrl})`)
+  for (const report of result.sitemaps) {
+    const label = report.kind === 'error' ? 'error' : `${report.kind}${report.status === 0 ? '' : ` HTTP ${report.status}`}`
+    lines.push(`  sitemap ${report.url} — ${label}, ${report.entryCount} entr${report.entryCount === 1 ? 'y' : 'ies'}${report.error === '' ? '' : ` (${report.error})`}`)
+  }
+  if (result.urlCount === 0) {
+    lines.push('no URLs found — the site publishes no readable sitemap (check the sitemap lines above)')
+  } else {
+    lines.push(`${result.urlCount} of ${result.discovered} discovered URL(s):`)
+    for (const [index, entry] of result.urls.entries()) {
+      const meta: string[] = []
+      if (entry.lastmod !== undefined) meta.push(`lastmod ${entry.lastmod}`)
+      if (entry.changefreq !== undefined) meta.push(entry.changefreq)
+      if (entry.priority !== undefined) meta.push(`priority ${entry.priority}`)
+      lines.push(`  ${index + 1}. ${entry.loc}${meta.length === 0 ? '' : ` — ${meta.join(', ')}`}`)
+    }
+  }
+  if (result.truncated) lines.push('[output capped — raise maxUrls/maxSitemaps or target one sitemap directly]')
   return lines.join('\n')
 }
 
@@ -626,5 +685,165 @@ export function buildWebfetchTools(config: ResolvedConfig): ToolSet {
     },
   })
 
-  return { web_fetch, web_links, web_feed, web_headers, web_table, web_meta }
+  const web_sitemap = defineTool({
+    name: 'web_sitemap',
+    description: 'List a site\'s own URLs from its sitemap — the whole-site counterpart of web_links (which only '
+      + 'sees one page). Give any page, robots.txt or sitemap URL: robots.txt is read first for its `Sitemap:` '
+      + 'directives, sitemap indexes are followed (bounded depth), and each <url> is returned with its optional '
+      + 'lastmod/changefreq/priority. Relative <loc> values are resolved to absolute URLs and duplicates are '
+      + 'collapsed. A sitemap that fails or is gzip-compressed is reported in `sitemaps` with the reason instead '
+      + 'of aborting the listing, so a partial inventory is still usable. Read-only, sends no credentials or cookies.',
+    parameters: {
+      url: { type: 'string', required: true, description: 'Full http/https URL: a site page, a robots.txt or a sitemap.xml / sitemap index.' },
+      maxUrls: { type: 'number', description: 'Max URLs to return (1–1000, default 100).' },
+      maxSitemaps: { type: 'number', description: 'Max sitemap documents to fetch (1–20, default 5).' },
+    },
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          url: { type: 'string', required: true },
+          robotsUrl: { type: 'string', required: true },
+          robotsStatus: { type: 'number', required: true },
+          sitemapCount: { type: 'number', required: true },
+          discovered: { type: 'number', required: true },
+          urlCount: { type: 'number', required: true },
+          truncated: { type: 'boolean', required: true },
+          sitemaps: {
+            type: 'array',
+            required: true,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                url: { type: 'string', required: true },
+                kind: { type: 'string', required: true },
+                status: { type: 'number', required: true },
+                entryCount: { type: 'number', required: true },
+                error: { type: 'string', required: true },
+              },
+            },
+          },
+          urls: {
+            type: 'array',
+            required: true,
+            items: {
+              type: 'object',
+              additionalProperties: false,
+              properties: {
+                loc: { type: 'string', required: true },
+                lastmod: { type: 'string' },
+                changefreq: { type: 'string' },
+                priority: { type: 'number' },
+              },
+            },
+          },
+        },
+      },
+      render: (_args: { url: string }, value: unknown) => [{ type: 'text', text: renderSitemap(value) }],
+    },
+    async execute(args: { url: string; maxUrls?: number; maxSitemaps?: number }) {
+      const maxUrls = Math.min(Math.max(args.maxUrls ?? DEFAULT_MAX_URLS, 1), MAX_URLS_LIMIT)
+      const maxSitemaps = Math.min(Math.max(args.maxSitemaps ?? DEFAULT_MAX_SITEMAPS, 1), MAX_SITEMAPS_LIMIT)
+      const start = new URL(assertHttpUrl(args.url))
+
+      let robotsUrl = ''
+      let robotsStatus = 0
+      let seeds: string[] = []
+      if (isSitemapLike(start.toString())) {
+        seeds = [start.toString()]
+      } else {
+        robotsUrl = start.pathname === '/robots.txt' ? start.toString() : `${start.origin}/robots.txt`
+        try {
+          const robotsPage = await fetchFeed(robotsUrl, config)
+          robotsStatus = robotsPage.status
+          seeds = parseRobots(robotsPage.body).sitemaps
+            .map((entry) => resolveHref(entry, robotsPage.finalUrl))
+            .filter((entry) => entry !== '')
+        } catch {
+          // No robots.txt (404/timeout): fall back to the conventional location.
+          robotsStatus = 0
+        }
+        if (seeds.length === 0) seeds = [`${start.origin}/sitemap.xml`]
+      }
+
+      const queue: Array<{ url: string; depth: number }> = seeds.map((seed) => ({ url: seed, depth: 0 }))
+      const seenSitemaps = new Set<string>()
+      const seenUrls = new Set<string>()
+      const urls: SitemapUrlItem[] = []
+      const sitemaps: SitemapReport[] = []
+      let truncated = false
+
+      while (queue.length > 0) {
+        if (sitemaps.length >= maxSitemaps || urls.length >= maxUrls) {
+          truncated = true
+          break
+        }
+        const next = queue.shift()
+        if (next === undefined) break
+        if (seenSitemaps.has(next.url)) continue
+        seenSitemaps.add(next.url)
+        if (/\.gz$/i.test(new URL(next.url).pathname)) {
+          sitemaps.push({ url: next.url, kind: 'gzip', status: 0, entryCount: 0, error: 'gzip-compressed sitemap is not decompressed — point the tool at the plain .xml sitemap' })
+          continue
+        }
+        try {
+          const page = await fetchFeed(next.url, config)
+          const parsed = parseSitemap(page.body)
+          if (parsed.kind === 'sitemapindex') {
+            sitemaps.push({ url: next.url, kind: 'index', status: page.status, entryCount: parsed.sitemaps.length, error: '' })
+            if (next.depth >= MAX_SITEMAP_DEPTH) {
+              truncated = true
+            } else {
+              for (const child of parsed.sitemaps) {
+                const childUrl = resolveHref(child, page.finalUrl)
+                if (childUrl !== '' && !seenSitemaps.has(childUrl)) queue.push({ url: childUrl, depth: next.depth + 1 })
+              }
+            }
+          } else {
+            sitemaps.push({ url: next.url, kind: 'urlset', status: page.status, entryCount: parsed.urls.length, error: '' })
+            for (const entry of parsed.urls) {
+              const loc = resolveHref(entry.loc, page.finalUrl)
+              if (loc === '' || seenUrls.has(loc)) continue
+              seenUrls.add(loc)
+              if (urls.length >= maxUrls) {
+                truncated = true
+                continue
+              }
+              const item: SitemapUrlItem = { loc }
+              if (entry.lastmod !== '') item.lastmod = entry.lastmod
+              if (entry.changefreq !== '') item.changefreq = entry.changefreq
+              if (entry.priority !== null) item.priority = entry.priority
+              urls.push(item)
+            }
+          }
+          if (page.truncated) truncated = true
+        } catch (error) {
+          sitemaps.push({
+            url: next.url,
+            kind: 'error',
+            status: 0,
+            entryCount: 0,
+            error: error instanceof Error ? error.message : String(error),
+          })
+        }
+      }
+      if (queue.length > 0) truncated = true
+
+      return {
+        url: args.url,
+        robotsUrl,
+        robotsStatus,
+        sitemapCount: sitemaps.length,
+        discovered: seenUrls.size,
+        urlCount: urls.length,
+        truncated,
+        sitemaps,
+        urls,
+      }
+    },
+  })
+
+  return { web_fetch, web_links, web_feed, web_headers, web_table, web_meta, web_sitemap }
 }

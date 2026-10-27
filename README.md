@@ -5,7 +5,7 @@
 
 A web page reader plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`).
 `dsh` agents can search, but until now they could not *read the page behind a URL*.
-`dsh-webfetch` closes that gap with six read-only tools and **zero runtime dependencies** (Node built-ins + global `fetch` only).
+`dsh-webfetch` closes that gap with seven read-only tools and **zero runtime dependencies** (Node built-ins + global `fetch` only).
 
 ## Tools
 
@@ -177,12 +177,49 @@ agent: web_meta("https://example.com/products/widget")
       2. WebPage, Organization
 ```
 
+### `web_sitemap`
+
+List a site's **own URLs** from its sitemap — the whole-site counterpart of
+`web_links`, which only sees one page. Give it a page, a `robots.txt` or a
+sitemap URL: `robots.txt` is read first for its `Sitemap:` directives (falling
+back to `/sitemap.xml` when none are published), sitemap **indexes are followed**
+to a bounded depth, and every `<url>` comes back with its optional
+`lastmod` / `changefreq` / `priority`. Relative `<loc>` values are resolved
+against the sitemap URL and duplicates are collapsed.
+
+| Parameter     | Type              | Default | Description                                                  |
+| ------------- | ----------------- | ------- | ------------------------------------------------------------ |
+| `url`         | string (required) | —       | Full http/https URL: a site page, a `robots.txt` or a sitemap. |
+| `maxUrls`     | number            | `100`   | Max URLs to return (1–1000).                                 |
+| `maxSitemaps` | number            | `5`     | Max sitemap documents to fetch (1–20).                       |
+
+Returns `{ url, robotsUrl, robotsStatus, sitemapCount, discovered, urlCount,
+truncated, sitemaps, urls }`. `robotsUrl` is `""` when the input was already a
+sitemap; `robotsStatus` is the robots.txt HTTP status (`0` when it was missing).
+Each entry of `sitemaps` is `{ url, kind, status, entryCount, error }` with
+`kind` one of `index`, `urlset`, `gzip` or `error` — a sitemap that fails or is
+gzip-compressed is **reported with its reason instead of aborting** the listing,
+so a partial inventory is still usable. `discovered` counts every distinct URL
+seen (even beyond `maxUrls`), so a capped answer stays honest.
+
+```text
+user: what pages does example.com publish?
+agent: web_sitemap("https://example.com/blog")
+  → sitemap inventory of https://example.com/blog — robots HTTP 200 (https://example.com/robots.txt)
+    sitemap https://example.com/sitemap-index.xml — index HTTP 200, 2 entries
+    sitemap https://example.com/sitemap-posts.xml — urlset HTTP 200, 3 entries
+    3 of 3 discovered URL(s):
+      1. https://example.com/docs/getting-started — lastmod 2026-10-01, weekly, priority 1
+      2. https://example.com/pricing — lastmod 2026-09-20, priority 0.8
+      3. https://example.com/blog/
+```
+
 ## Install
 
 ```sh
 dsh plugin --profile web add github:TYEclipse/dsh-webfetch
 # or a pinned release:
-dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.5.0
+dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.6.0
 ```
 
 Restart your agent session and the tools are available to the model.
@@ -198,7 +235,7 @@ plugins:
     maxBytes: 1500000       # response size cap in bytes (10000–5000000)
     maxChars: 50000         # extracted content cap in chars (1000–200000)
     maxRedirects: 3         # redirect hops to follow (0–10)
-    userAgent: "dsh-webfetch/0.3 (DeepSeek Harness plugin)"
+    userAgent: "dsh-webfetch/0.6 (DeepSeek Harness plugin)"
 ```
 
 ## Proxy support
@@ -233,9 +270,10 @@ Proxy credentials embedded in the proxy URL are sent as
   response size cap, extracted-text cap. Oversized bodies are cut off and
   flagged (`truncated: true`), never buffered past the cap.
 - **Content-type gated** — `web_fetch`/`web_links` parse only `text/html` and
-  `text/plain`; `web_feed` additionally accepts `application/rss+xml`,
-  `application/atom+xml`, `application/xml` and `text/xml`. Scripts, styles,
-  comments and embedded content are stripped by the extractor/parser.
+  `text/plain`; `web_feed` and `web_sitemap` additionally accept
+  `application/rss+xml`, `application/atom+xml`, `application/xml` and
+  `text/xml` (a `robots.txt` is `text/plain`). Scripts, styles, comments and
+  embedded content are stripped by the extractor/parser.
 - **Charset-aware** — honours the `Content-Type` charset, falls back to XML
   declaration / `<meta charset>` sniffing, then UTF-8.
 
@@ -244,7 +282,7 @@ Proxy credentials embedded in the proxy URL are sent as
 ```sh
 pnpm install
 pnpm build      # tsc
-pnpm test       # vitest — 145 tests, fully offline (local fixture servers)
+pnpm test       # vitest — 163 tests, fully offline (local fixture servers)
 pnpm lint       # oxlint src test
 ```
 
@@ -256,4 +294,4 @@ pnpm lint       # oxlint src test
 
 ## 中文简介
 
-dsh-webfetch 是 DeepSeek Harness 的网页阅读插件：智能体拿到 URL 后可以直接抓取页面并提取干净的 Markdown 或纯文本（保留标题、链接、列表与代码块，剥离脚本/样式），`web_links` 可列出页面全部链接（解析为绝对地址、去重、限量），`web_feed` 可解析 RSS 2.0 / Atom 订阅源为条目清单（标题/链接/发布时间/作者/摘要/正文，处理 CDATA、HTML 实体与相对链接），`web_headers` 可用 HEAD 请求探测任意 URL 的 HTTP 状态码、响应头与重定向链而不下载正文（服务器不支持 HEAD 时自动回退 GET，非 2xx 状态照常报告），`web_table` 可把页面上的 HTML 表格提取为结构化行（表头识别、colspan/rowspan 网格展开、行列上限，定价页/参数表/对比表直接可用），`web_meta` 可读取页面自身的元数据（标题、描述、canonical、语言与字符集、robots、作者、Open Graph/article/Twitter 属性、hreflang 多语言版本、订阅源自动发现、图标与 JSON-LD 的 @type 摘要；解析失败的 JSON-LD 如实报错而不丢弃）。零运行时依赖、只读、不发送凭证；http/https 协议限定、超时/重定向/体积/文本长度全部有上限，字符集自动识别（Content-Type → XML 声明/meta → UTF-8）；内置零依赖 http 代理支持（CONNECT 隧道 + NO_PROXY 白名单，自动读环境变量），在必须走代理的网络也能正常工作。与内置搜索互补：搜索给线索，webfetch 读正文，web_meta 读身份，web_headers 读前诊断，web_table 提数据。
+dsh-webfetch 是 DeepSeek Harness 的网页阅读插件：智能体拿到 URL 后可以直接抓取页面并提取干净的 Markdown 或纯文本（保留标题、链接、列表与代码块，剥离脚本/样式），`web_links` 可列出页面全部链接（解析为绝对地址、去重、限量），`web_feed` 可解析 RSS 2.0 / Atom 订阅源为条目清单（标题/链接/发布时间/作者/摘要/正文，处理 CDATA、HTML 实体与相对链接），`web_headers` 可用 HEAD 请求探测任意 URL 的 HTTP 状态码、响应头与重定向链而不下载正文（服务器不支持 HEAD 时自动回退 GET，非 2xx 状态照常报告），`web_table` 可把页面上的 HTML 表格提取为结构化行（表头识别、colspan/rowspan 网格展开、行列上限，定价页/参数表/对比表直接可用），`web_meta` 可读取页面自身的元数据（标题、描述、canonical、语言与字符集、robots、作者、Open Graph/article/Twitter 属性、hreflang 多语言版本、订阅源自动发现、图标与 JSON-LD 的 @type 摘要；解析失败的 JSON-LD 如实报错而不丢弃），`web_sitemap` 可从 robots.txt 的 `Sitemap:` 指令枚举整站 URL（跟随 sitemap 索引、带 lastmod/changefreq/priority、相对地址解析为绝对地址、重复折叠；抓取失败或 gzip 压缩的 sitemap 带原因列出而不中断整次查询）。零运行时依赖、只读、不发送凭证；http/https 协议限定、超时/重定向/体积/文本长度全部有上限，字符集自动识别（Content-Type → XML 声明/meta → UTF-8）；内置零依赖 http 代理支持（CONNECT 隧道 + NO_PROXY 白名单，自动读环境变量），在必须走代理的网络也能正常工作。与内置搜索互补：搜索给线索，webfetch 读正文，web_meta 读身份，web_headers 读前诊断，web_table 提数据，web_sitemap 列全站。

@@ -27,6 +27,7 @@ import json
 import os
 import re
 import sys
+import xml.etree.ElementTree as ET
 from html.parser import HTMLParser
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -343,6 +344,166 @@ def meta_summary(html: str):
 
 
 # --------------------------------------------------------------------------
+# §3b sitemap / robots oracle (test/sitemap.test.ts)
+# --------------------------------------------------------------------------
+# A second reader (xml.etree, namespace-agnostic) for the same documents the
+# TypeScript regex parser reads, plus an independent regex derivation that
+# `--check` compares against it. Fixtures are copied from the test file.
+
+DEFAULT_MAX_URLS = 100          # src/sitemap.ts — web_sitemap default
+MAX_URLS_LIMIT = 1_000          # src/sitemap.ts — hard cap
+DEFAULT_MAX_SITEMAPS = 5        # src/sitemap.ts
+MAX_SITEMAPS_LIMIT = 20         # src/sitemap.ts
+MAX_SITEMAP_DEPTH = 2           # src/sitemap.ts — nested index depth
+MAX_LOC_CHARS = 2_000           # src/sitemap.ts — per-<loc> cap
+MAX_LASTMOD_CHARS = 40          # src/sitemap.ts
+MAX_CHANGEFREQ_CHARS = 20       # src/sitemap.ts
+
+ROBOTS_FIXTURE = """# fixture robots
+User-agent: *
+Disallow: /admin  # keep crawlers out
+Crawl-delay: 5
+
+Sitemap: /sitemap-index.xml
+Sitemap: /sitemap-a.xml
+Sitemap: /sitemap-index.xml
+"""
+
+SITEMAP_INDEX_FIXTURE = """<?xml version="1.0" encoding="UTF-8"?>
+<sitemapindex xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <sitemap><loc>/sitemap-a.xml</loc><lastmod>2026-10-20</lastmod></sitemap>
+  <sitemap><loc>/sitemap-c.xml</loc></sitemap>
+  <sitemap><loc>/sitemap-c.xml</loc></sitemap>
+</sitemapindex>"""
+
+SITEMAP_A_FIXTURE = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>/docs/getting-started</loc><lastmod>2026-10-01</lastmod><changefreq>weekly</changefreq><priority>1.0</priority></url>
+  <url><loc>https://example.test/pricing?plan=a&amp;b=1</loc><lastmod>2026-09-20</lastmod><priority>0.8</priority></url>
+  <url><loc>/blog/</loc></url>
+</urlset>"""
+
+SITEMAP_C_FIXTURE = """<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>/about</loc><changefreq>monthly</changefreq><priority>0</priority></url>
+  <url><loc>/contact</loc><lastmod>2026-08-15</lastmod></url>
+</urlset>"""
+
+
+def _local(tag: str) -> str:
+    """Element name without its XML namespace (`{ns}url` -> `url`)."""
+    return tag.rsplit("}", 1)[-1]
+
+
+def robots_oracle(text: str):
+    """Independent robots.txt reader: `Sitemap:` values (deduped) + crawl delay."""
+    sitemaps, seen, crawl_delay = [], set(), ""
+    for raw in re.split(r"\r\n|\r|\n", text):
+        line = raw.split("#")[0].strip()
+        if not line or ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key = key.strip().lower()
+        value = value.strip()
+        if key == "sitemap" and value != "":
+            if value not in seen:
+                seen.add(value)
+                sitemaps.append(value)
+        elif key == "crawl-delay" and crawl_delay == "":
+            crawl_delay = value
+    return {"sitemaps": sitemaps, "crawlDelay": crawl_delay}
+
+
+def sitemap_oracle(text: str):
+    """Independent sitemap reader built on xml.etree (a different engine)."""
+    root = ET.fromstring(text)
+    kind = _local(root.tag)
+    urls, sitemaps = [], []
+    if kind == "urlset":
+        for node in root:
+            if _local(node.tag) != "url":
+                continue
+            fields = {}
+            for child in node:
+                fields[_local(child.tag)] = (child.text or "").strip()
+            loc = fields.get("loc", "")
+            if loc == "":
+                continue
+            raw_priority = fields.get("priority", "")
+            priority = None
+            if raw_priority != "":
+                try:
+                    priority = round(float(raw_priority), 2)
+                except ValueError:
+                    priority = None
+                if priority == 0:
+                    priority = 0          # fold -0 into 0
+            urls.append({
+                "loc": loc,
+                "lastmod": fields.get("lastmod", ""),
+                "changefreq": fields.get("changefreq", ""),
+                "priority": priority,
+            })
+    elif kind == "sitemapindex":
+        for node in root:
+            if _local(node.tag) != "sitemap":
+                continue
+            loc = ""
+            for child in node:
+                if _local(child.tag) == "loc":
+                    loc = (child.text or "").strip()
+                    break
+            if loc != "" and loc not in sitemaps:
+                sitemaps.append(loc)
+    else:
+        raise ValueError(f"unexpected sitemap root element {kind!r}")
+    return {"kind": kind, "urls": urls, "sitemaps": sitemaps}
+
+
+def regex_sitemap(text: str):
+    """Second, regex-only derivation (cross-check for sitemap_oracle)."""
+    if re.search(r"<sitemapindex[\s>]", text, re.IGNORECASE):
+        children, seen = [], set()
+        for match in re.finditer(r"<sitemap(?:\s[^>]*)?>([\s\S]*?)</sitemap>", text, re.IGNORECASE):
+            loc = re.search(r"<loc\b[^>]*>([\s\S]*?)</loc>", match.group(1), re.IGNORECASE)
+            value = html_unescape(loc.group(1).strip()) if loc is not None else ""
+            if value and value not in seen:
+                seen.add(value)
+                children.append(value)
+        return {"kind": "sitemapindex", "urls": [], "sitemaps": children}
+    if re.search(r"<urlset[\s>]", text, re.IGNORECASE):
+        urls = []
+        for match in re.finditer(r"<url(?:\s[^>]*)?>([\s\S]*?)</url>", text, re.IGNORECASE):
+            block = match.group(1)
+
+            def field(tag):
+                hit = re.search(rf"<{tag}\b[^>]*>([\s\S]*?)</{tag}>", block, re.IGNORECASE)
+                return html_unescape(hit.group(1).strip()) if hit is not None else ""
+
+            loc = field("loc")
+            if loc == "":
+                continue
+            raw = field("priority")
+            priority = None
+            if raw != "":
+                try:
+                    priority = round(float(raw), 2)
+                except ValueError:
+                    priority = None
+                if priority == 0:
+                    priority = 0
+            urls.append({"loc": loc, "lastmod": field("lastmod"),
+                         "changefreq": field("changefreq"), "priority": priority})
+        return {"kind": "urlset", "urls": urls, "sitemaps": []}
+    raise ValueError("not a recognized sitemap document")
+
+
+def html_unescape(value: str) -> str:
+    return (value.replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">")
+            .replace("&quot;", '"').replace("&apos;", "'"))
+
+
+# --------------------------------------------------------------------------
 # §3 independent derivations of the same expectations (regex / string ops)
 # --------------------------------------------------------------------------
 
@@ -431,6 +592,31 @@ def print_anchors():
     print(f"    json-ld cap: 12 blocks with maxJsonLd=3 -> jsonLdCount {capped['jsonLdCount']}, "
           f"emitted {len(capped['jsonLd'])}")
 
+    print("\n[7] sitemap / robots oracle (test/sitemap.test.ts fixtures)")
+    robots = robots_oracle(ROBOTS_FIXTURE)
+    print(f"    robots.txt: sitemaps = {robots['sitemaps']} ({len(robots['sitemaps'])}), "
+          f"crawlDelay = {robots['crawlDelay']!r}")
+    sitemap_a = sitemap_oracle(SITEMAP_A_FIXTURE)
+    sitemap_c = sitemap_oracle(SITEMAP_C_FIXTURE)
+    sitemap_index = sitemap_oracle(SITEMAP_INDEX_FIXTURE)
+    for label, parsed in (("sitemap-a.xml", sitemap_a), ("sitemap-c.xml", sitemap_c)):
+        print(f"    {label}: kind={parsed['kind']} urls={len(parsed['urls'])}")
+        for entry in parsed["urls"]:
+            print(f"      {entry['loc']} lastmod={entry['lastmod']!r} "
+                  f"changefreq={entry['changefreq']!r} priority={entry['priority']}")
+    print(f"    sitemap-index.xml: kind={sitemap_index['kind']} "
+          f"children={sitemap_index['sitemaps']} ({len(sitemap_index['sitemaps'])})")
+    distinct = {entry["loc"] for entry in sitemap_a["urls"]} | {entry["loc"] for entry in sitemap_c["urls"]}
+    print(f"    combined distinct URLs = {len(distinct)}")
+    print("    caps: maxUrls=2 -> urlCount 2, discovered 3, truncated=true")
+    print("    caps: maxSitemaps=1 -> sitemapCount 1 (the index only), urlCount 0, truncated=true")
+    print("    failure reporting: non-sitemap document -> kind=error; .gz -> kind=gzip; urlCount 0 for both")
+    print(f"    documented bounds: maxUrls default {DEFAULT_MAX_URLS} / limit {MAX_URLS_LIMIT}; "
+          f"maxSitemaps default {DEFAULT_MAX_SITEMAPS} / limit {MAX_SITEMAPS_LIMIT}; "
+          f"nested index depth {MAX_SITEMAP_DEPTH}")
+    print(f"    per-value caps: loc {MAX_LOC_CHARS}, lastmod {MAX_LASTMOD_CHARS}, "
+          f"changefreq {MAX_CHANGEFREQ_CHARS}")
+
 
 # --------------------------------------------------------------------------
 # §5 self-check — public values, definitional identities and cross-derivation
@@ -497,6 +683,35 @@ def check():
         '<table><tr><td rowspan="2">x</td><td>1</td></tr><tr><td>2</td></tr></table>')["tables"][0]["rows"],
         [["x", "1"], ["x", "2"]])
     expect("cell cap", anchors_table.MAX_CELL, MAX_CELL_CHARS)
+
+    # (e) sitemap oracle: two readers (xml.etree vs regex) must agree, and the
+    #     documented invariants of the format must hold.
+    for label, document in (("sitemap-a", SITEMAP_A_FIXTURE),
+                            ("sitemap-c", SITEMAP_C_FIXTURE),
+                            ("sitemap-index", SITEMAP_INDEX_FIXTURE)):
+        expect(f"{label}: etree vs regex kind", sitemap_oracle(document)["kind"], regex_sitemap(document)["kind"])
+        expect(f"{label}: etree vs regex urls", sitemap_oracle(document)["urls"], regex_sitemap(document)["urls"])
+        expect(f"{label}: etree vs regex children",
+               sitemap_oracle(document)["sitemaps"], regex_sitemap(document)["sitemaps"])
+    parsed_a = sitemap_oracle(SITEMAP_A_FIXTURE)
+    expect("urlset entries", len(parsed_a["urls"]), 3)
+    expect("every loc non-empty", all(entry["loc"] for entry in parsed_a["urls"]), True)
+    expect("priority range", all(entry["priority"] is None or 0 <= entry["priority"] <= 1
+                                for entry in parsed_a["urls"]), True)
+    expect("entity-decoded loc", parsed_a["urls"][1]["loc"], "https://example.test/pricing?plan=a&b=1")
+    expect("explicit priority 1.0", parsed_a["urls"][0]["priority"], 1)
+    expect("absent priority is None", parsed_a["urls"][2]["priority"], None)
+    expect("zero priority folds to 0", sitemap_oracle(SITEMAP_C_FIXTURE)["urls"][0]["priority"], 0)
+    expect("index children deduplicated", len(sitemap_oracle(SITEMAP_INDEX_FIXTURE)["sitemaps"]), 2)
+    expect("index carries no urls", sitemap_oracle(SITEMAP_INDEX_FIXTURE)["urls"], [])
+    robots = robots_oracle(ROBOTS_FIXTURE)
+    expect("robots sitemaps deduplicated", robots["sitemaps"], ["/sitemap-index.xml", "/sitemap-a.xml"])
+    expect("robots crawl delay", robots["crawlDelay"], "5")
+    expect("robots ignores the commented-out disallow", "keep crawlers out" in robots["sitemaps"], False)
+    expect("documented maxUrls default", DEFAULT_MAX_URLS, 100)
+    expect("documented maxUrls limit", MAX_URLS_LIMIT, 1000)
+    expect("documented maxSitemaps default", DEFAULT_MAX_SITEMAPS, 5)
+    expect("documented maxSitemaps limit", MAX_SITEMAPS_LIMIT, 20)
 
     if failures:
         print("oracle self-check FAILED:")

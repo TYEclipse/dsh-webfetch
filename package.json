@@ -1,7 +1,7 @@
 {
   "name": "dsh-webfetch",
-  "version": "0.5.0",
-  "description": "Web page reader for DeepSeek Harness (dsh): fetch any URL and extract clean markdown or plain text, inventory links, read RSS/Atom feeds, inspect HTTP headers without the body, extract HTML tables as structured rows, and read a page's own metadata (canonical, Open Graph, hreflang, feed autodiscovery, JSON-LD) — zero runtime dependencies",
+  "version": "0.6.0",
+  "description": "Web page reader for DeepSeek Harness (dsh): fetch any URL and extract clean markdown or plain text, inventory links, read RSS/Atom feeds, inspect HTTP headers without the body, extract HTML tables as structured rows, read a page's own metadata (canonical, Open Graph, hreflang, feed autodiscovery, JSON-LD) and list a site's URLs from robots.txt + sitemap.xml (sitemap indexes followed, lastmod/changefreq/priority reported) — zero runtime dependencies",
   "type": "module",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -36,7 +36,11 @@
     "twitter-card",
     "json-ld",
     "canonical-url",
-    "hreflang"
+    "hreflang",
+    "sitemap",
+    "sitemap-index",
+    "robots-txt",
+    "url-inventory"
   ],
   "license": "MIT",
   "repository": {

@@ -1,6 +1,6 @@
 # dsh-webfetch
 
-DeepSeek Harness（dsh）的网页阅读插件：给定 URL，抓取网页并提取干净的 Markdown / 纯文本正文，附链接清单、RSS/Atom 订阅源解析、HTTP 头部探测、网页表格结构化提取与页面元数据读取。零运行时依赖，只读，不发送任何凭证。
+DeepSeek Harness（dsh）的网页阅读插件：给定 URL，抓取网页并提取干净的 Markdown / 纯文本正文，附链接清单、RSS/Atom 订阅源解析、HTTP 头部探测、网页表格结构化提取、页面元数据读取与站点地图 URL 枚举。零运行时依赖，只读，不发送任何凭证。
 
 [English](README.md) | 中文
 
@@ -115,15 +115,39 @@ agent: web_meta("https://example.com/products/widget")
       2. WebPage, Organization
 ```
 
+### `web_sitemap`
+
+列出站点**自己的 URL**——`web_links` 只看单页，`web_sitemap` 看整站。给它任意页面、`robots.txt` 或 sitemap 地址：先读 `robots.txt` 的 `Sitemap:` 指令（没有就回退 `/sitemap.xml`），**跟随 sitemap 索引**（深度有界），每个 `<url>` 带可选的 `lastmod` / `changefreq` / `priority` 一并返回；相对 `<loc>` 按 sitemap 地址解析为绝对地址，重复地址折叠。
+
+| 参数          | 类型              | 默认值 | 说明                                                        |
+| ------------- | ----------------- | ------ | ----------------------------------------------------------- |
+| `url`         | string（必填）    | —      | 完整 http/https 地址：站点页面、`robots.txt` 或 sitemap。   |
+| `maxUrls`     | number            | `100`  | 最多返回多少个 URL（1–1000）。                              |
+| `maxSitemaps` | number            | `5`    | 最多抓取几个 sitemap 文档（1–20）。                         |
+
+返回 `{ url, robotsUrl, robotsStatus, sitemapCount, discovered, urlCount, truncated, sitemaps, urls }`。输入本身就是 sitemap 时 `robotsUrl` 为 `""`；`robotsStatus` 是 `robots.txt` 的 HTTP 状态（缺失时 `0`）。`sitemaps` 每项为 `{ url, kind, status, entryCount, error }`，`kind` 取 `index` / `urlset` / `gzip` / `error`——**某个 sitemap 抓取失败或是 gzip 压缩，会带原因列出来而不是让整次查询失败**，部分清单仍然可用；`discovered` 统计「看到了多少个不同地址」（即使超过 `maxUrls`），所以被裁剪的答案也是诚实的。
+
+```text
+user: example.com 都发布了哪些页面？
+agent: web_sitemap("https://example.com/blog")
+  → sitemap inventory of https://example.com/blog — robots HTTP 200 (https://example.com/robots.txt)
+    sitemap https://example.com/sitemap-index.xml — index HTTP 200, 2 entries
+    sitemap https://example.com/sitemap-posts.xml — urlset HTTP 200, 3 entries
+    3 of 3 discovered URL(s):
+      1. https://example.com/docs/getting-started — lastmod 2026-10-01, weekly, priority 1
+      2. https://example.com/pricing — lastmod 2026-09-20, priority 0.8
+      3. https://example.com/blog/
+```
+
 ## 安装
 
 ```sh
 dsh plugin --profile web add github:TYEclipse/dsh-webfetch
 # 或指定已发布版本：
-dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.5.0
+dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.6.0
 ```
 
-重启会话后模型即可使用这六个工具。
+重启会话后模型即可使用这七个工具。
 
 ## 配置（均可选，以下为默认值）
 
@@ -134,7 +158,7 @@ plugins:
     maxBytes: 1500000       # 响应体积上限，字节（10000–5000000）
     maxChars: 50000         # 提取正文长度上限（1000–200000）
     maxRedirects: 3         # 重定向跳数上限（0–10）
-    userAgent: "dsh-webfetch/0.3 (DeepSeek Harness plugin)"
+    userAgent: "dsh-webfetch/0.6 (DeepSeek Harness plugin)"
     httpsProxy: ""          # http://host:port；留空默认读 HTTPS_PROXY 环境变量，'' 显式禁用
     httpProxy: ""           # 同上，对应 HTTP_PROXY
     noProxy: ""             # 直连白名单，留空默认读 NO_PROXY 环境变量
@@ -161,7 +185,7 @@ plugins:
 - **仅限 http/https**：`file:`、`ftp:`、`javascript:` 等一律拒绝。
 - **零凭证**：拒绝内嵌凭证的 URL；不附加 cookie/Authorization；不做任何持久化。
 - **处处有上限**：请求超时、重定向跳数、响应体积、正文长度全部封顶；超限截断并标记 `truncated: true`，绝不越界缓冲。
-- **类型门禁**：`web_fetch`/`web_links` 只解析 `text/html` 与 `text/plain`；`web_feed` 额外接受 `application/rss+xml`、`application/atom+xml`、`application/xml` 与 `text/xml`。脚本/样式/注释/嵌入内容由提取器/解析器剥离。
+- **类型门禁**：`web_fetch`/`web_links` 只解析 `text/html` 与 `text/plain`；`web_feed` 与 `web_sitemap` 额外接受 `application/rss+xml`、`application/atom+xml`、`application/xml` 与 `text/xml`（`robots.txt` 是 `text/plain`）。脚本/样式/注释/嵌入内容由提取器/解析器剥离。
 - **字符集自动识别**：Content-Type → XML 声明 / `<meta charset>` 嗅探 → UTF-8 兜底。
 
 ## 开发
@@ -169,7 +193,7 @@ plugins:
 ```sh
 pnpm install
 pnpm build      # tsc
-pnpm test       # vitest — 125 个测试，全程离线（本地 fixture 服务器）
+pnpm test       # vitest — 163 个测试，全程离线（本地 fixture 服务器）
 pnpm lint       # oxlint src test
 ```
 

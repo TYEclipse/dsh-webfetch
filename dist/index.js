@@ -1,7 +1,7 @@
 /**
  * dsh-webfetch — web page reader for DeepSeek Harness.
  *
- * Six read-only tools, zero runtime dependencies (node built-ins + global
+ * Seven read-only tools, zero runtime dependencies (node built-ins + global
  * fetch only):
  *   web_fetch    — fetch a URL and extract clean markdown or plain text
  *                  (headings, links, lists, code fences; scripts and styling
@@ -20,6 +20,9 @@
  *                  canonical, language, charset, robots, author, Open Graph
  *                  and article properties, Twitter cards, hreflang
  *                  alternates, feed autodiscovery, icons and JSON-LD blocks
+ *   web_sitemap  — list a site's own URLs: robots.txt `Sitemap:` discovery,
+ *                  sitemap indexes followed to a bounded depth, each <url>
+ *                  with lastmod/changefreq/priority
  *
  * Safety model: http/https only, embedded URL credentials rejected, no
  * cookies or credentials sent, redirect hops limited, body size capped,
@@ -36,7 +39,7 @@ export const name = 'dsh-webfetch';
 /** Services required before tool registration can start. */
 export const inject = ['agents', 'tools'];
 /** Single source of truth for the default User-Agent (schema + resolveConfig). */
-export const DEFAULT_USER_AGENT = 'dsh-webfetch/0.5 (DeepSeek Harness plugin)';
+export const DEFAULT_USER_AGENT = 'dsh-webfetch/0.6 (DeepSeek Harness plugin)';
 export const Config = z.object({
     timeoutMs: z.number().min(1_000).max(60_000).default(10_000),
     maxBytes: z.number().min(10_000).max(5_000_000).default(1_500_000),

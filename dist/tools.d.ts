@@ -3,11 +3,12 @@
  * agent — web_fetch (URL to clean markdown/text), web_links (link
  * inventory of a page), web_feed (RSS/Atom entry listing), web_headers
  * (HTTP status/headers/redirect chain without the body), web_table
- * (HTML tables as structured rows) and web_meta (the page's own metadata:
+ * (HTML tables as structured rows), web_meta (the page's own metadata:
  * title, description, canonical, hreflang alternates, Open Graph, Twitter
- * cards, feed autodiscovery, icons and JSON-LD). All validate the
- * URL, follow a bounded number of redirects, enforce a size cap and never
- * send credentials.
+ * cards, feed autodiscovery, icons and JSON-LD) and web_sitemap (site-level
+ * URL inventory from robots.txt + sitemap.xml, following sitemap indexes).
+ * All validate the URL, follow a bounded number of redirects, enforce a size
+ * cap and never send credentials.
  *
  * @module dsh-webfetch/tools
  */
@@ -20,6 +21,22 @@ export interface ToolSet {
     web_headers: ToolDefinition;
     web_table: ToolDefinition;
     web_meta: ToolDefinition;
+    web_sitemap: ToolDefinition;
+}
+/** One fetched sitemap document, as reported by web_sitemap. */
+export interface SitemapReport {
+    url: string;
+    kind: 'index' | 'urlset' | 'gzip' | 'error';
+    status: number;
+    entryCount: number;
+    error: string;
+}
+/** One URL of a web_sitemap result (optional fields only present when known). */
+export interface SitemapUrlItem {
+    loc: string;
+    lastmod?: string;
+    changefreq?: string;
+    priority?: number;
 }
 /** One entry of a web_feed result (optional fields only present when known). */
 export interface FeedItem {

@@ -2,6 +2,10 @@
 
 > 版本口径：patch 修 bug/补测试｜minor 新增用户可见功能｜major 破坏性变更。安装：`dsh plugin --profile web add github:TYEclipse/dsh-webfetch`
 
+## [0.6.0] — 2026-10-28
+### Minor · R82
+- [自主进化] R82 新增 web_sitemap——从 robots.txt 的 Sitemap 指令枚举整站 URL（跟随 sitemap 索引、lastmod/changefreq/priority、相对地址解析、重复折叠；失败与 gzip 带因列出不中断），oracle 扩 sitemap 区（ElementTree 与正则双读对拍）
+
 ## [0.5.0] — 2026-10-10
 ### Minor · R65
 - [自主进化] R65 新增 web_meta（元数据读取：canonical/Open Graph/Twitter/hreflang/订阅源自动发现/图标/JSON-LD，解析失败如实报错）+ oracle 迁到 test/oracle/anchors.py（7 测试文件全带标记，双引擎自检）
