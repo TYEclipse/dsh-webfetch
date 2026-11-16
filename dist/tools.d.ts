@@ -5,8 +5,10 @@
  * (HTTP status/headers/redirect chain without the body), web_table
  * (HTML tables as structured rows), web_meta (the page's own metadata:
  * title, description, canonical, hreflang alternates, Open Graph, Twitter
- * cards, feed autodiscovery, icons and JSON-LD) and web_sitemap (site-level
- * URL inventory from robots.txt + sitemap.xml, following sitemap indexes).
+ * cards, feed autodiscovery, icons and JSON-LD), web_sitemap (site-level
+ * URL inventory from robots.txt + sitemap.xml, following sitemap indexes) and
+ * web_robots (the robots.txt rule engine: which group applies, which rule
+ * decides, and whether one path may be read at all).
  * All validate the URL, follow a bounded number of redirects, enforce a size
  * cap and never send credentials.
  *
@@ -22,6 +24,7 @@ export interface ToolSet {
     web_table: ToolDefinition;
     web_meta: ToolDefinition;
     web_sitemap: ToolDefinition;
+    web_robots: ToolDefinition;
 }
 /** One fetched sitemap document, as reported by web_sitemap. */
 export interface SitemapReport {

@@ -1,6 +1,6 @@
 # dsh-webfetch
 
-DeepSeek Harness（dsh）的网页阅读插件：给定 URL，抓取网页并提取干净的 Markdown / 纯文本正文，附链接清单、RSS/Atom 订阅源解析、HTTP 头部探测、网页表格结构化提取、页面元数据读取与站点地图 URL 枚举。零运行时依赖，只读，不发送任何凭证。
+DeepSeek Harness（dsh）的网页阅读插件：给定 URL，抓取网页并提取干净的 Markdown / 纯文本正文，附链接清单、RSS/Atom 订阅源解析、HTTP 头部探测、网页表格结构化提取、页面元数据读取、站点地图 URL 枚举与 robots.txt 规则判定。零运行时依赖，只读，不发送任何凭证。
 
 [English](README.md) | 中文
 
@@ -139,15 +139,46 @@ agent: web_sitemap("https://example.com/blog")
       3. https://example.com/blog/
 ```
 
+### `web_robots`
+
+回答爬虫最先要问的那个问题：**我这个 agent 能不能读这个路径？** `web_sitemap` 只读 `robots.txt` 里的 `Sitemap:` 行；这个工具读的是**访问规则本身**，并按 RFC 9309 的口径判定：
+
+- 组 = `User-agent:` 行 + 紧跟的 `Allow:` / `Disallow:` 行（规则之后再出现 `User-agent:` 就开新组；`Sitemap:` 与 `Crawl-delay:` 是全局的）；
+- 组的 agent 值是我们产品标识（`dsh-webfetch`）的**大小写不敏感前缀**即匹配，**最具体的匹配胜出**，只有在没有任何具体匹配时才用 `*`；
+- 规则从路径第一个字符开始匹配（路径含 query），`*` 匹配任意串，结尾 `$` 表示锚定到末尾；
+- **最长**的匹配规则胜出，长度相同则 `Allow` 胜（RFC 9309 §2.2.2）。
+
+| 参数        | 类型              | 默认值       | 说明                                                   |
+| ----------- | ----------------- | ------------ | ------------------------------------------------------ |
+| `url`       | string（必填）    | —            | 完整 http/https 地址：要读的页面，或 `robots.txt`。    |
+| `path`      | string            | URL 自身的路径 | 要测的路径（可带 `?query`），如 `/blog/post-1`。       |
+| `userAgent` | string            | 插件 UA      | 用哪个 agent 去匹配组（实际比的是斜杠前的产品标识）。  |
+| `maxRules`  | number            | `50`         | 列出该组多少条规则（1–200）。                          |
+
+返回 `{ url, robotsUrl, robotsStatus, bytes, userAgent, productToken, target, allowed, decision, matchedKind, matchedAgents, groupCount, ruleCount, ignoredRules, orphanRules, crawlDelay?, sitemaps, rules, rule?, notes, truncated }`。诚实的地方才是重点：
+
+- `decision` 说明**这个答案是怎么来的**：`rule`（真有一条规则决定了它）、`no-matching-rule`（该组有规则、但没有一条匹配 → 默认允许）、`no-group`（既没有给我们建的组、也没有 `*` 组）、`no-robots`（4xx：文件不存在，所以没有规则）、`unavailable`（5xx 或读不到：RFC 9309 要求按「完全禁止」处理，此时 `allowed` 为 `false`）。
+- 没有规则命中时 `rule` **字段缺席**，而不是编一个 pattern 出来；文件没写 `Crawl-delay` 时 `crawlDelay` 也缺席。
+- `notes` 解释那些「看着对其实没用」的东西：`Disallow: admin` 这种不以 `/` 开头的规则永远匹配不到路径、空的 `Allow`/`Disallow` 行匹配不了任何东西、任何 `User-agent` 之前的规则被忽略、`Crawl-delay` 只是自觉约定（RFC 9309 没有延迟指令）、文件超过 512 KiB 时解析器可以截断。
+
+```text
+user: example.com/no-webfetch/x 能读吗？
+agent: web_robots("https://example.com/no-webfetch/x")
+  → robots.txt of https://example.com/robots.txt — HTTP 200, 326 bytes
+    agent dsh-webfetch/0.7 (DeepSeek Harness plugin) (token "dsh-webfetch") → /no-webfetch/x
+    disallowed by disallow "/no-webfetch" — 12 octets, line 8
+    group: specific match on dsh-webfetch
+```
+
 ## 安装
 
 ```sh
 dsh plugin --profile web add github:TYEclipse/dsh-webfetch
 # 或指定已发布版本：
-dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.6.0
+dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.7.0
 ```
 
-重启会话后模型即可使用这七个工具。
+重启会话后模型即可使用这八个工具。
 
 ## 配置（均可选，以下为默认值）
 
@@ -158,7 +189,7 @@ plugins:
     maxBytes: 1500000       # 响应体积上限，字节（10000–5000000）
     maxChars: 50000         # 提取正文长度上限（1000–200000）
     maxRedirects: 3         # 重定向跳数上限（0–10）
-    userAgent: "dsh-webfetch/0.6 (DeepSeek Harness plugin)"
+    userAgent: "dsh-webfetch/0.7 (DeepSeek Harness plugin)"
     httpsProxy: ""          # http://host:port；留空默认读 HTTPS_PROXY 环境变量，'' 显式禁用
     httpProxy: ""           # 同上，对应 HTTP_PROXY
     noProxy: ""             # 直连白名单，留空默认读 NO_PROXY 环境变量

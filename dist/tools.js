@@ -5,8 +5,10 @@
  * (HTTP status/headers/redirect chain without the body), web_table
  * (HTML tables as structured rows), web_meta (the page's own metadata:
  * title, description, canonical, hreflang alternates, Open Graph, Twitter
- * cards, feed autodiscovery, icons and JSON-LD) and web_sitemap (site-level
- * URL inventory from robots.txt + sitemap.xml, following sitemap indexes).
+ * cards, feed autodiscovery, icons and JSON-LD), web_sitemap (site-level
+ * URL inventory from robots.txt + sitemap.xml, following sitemap indexes) and
+ * web_robots (the robots.txt rule engine: which group applies, which rule
+ * decides, and whether one path may be read at all).
  * All validate the URL, follow a bounded number of redirects, enforce a size
  * cap and never send credentials.
  *
@@ -16,10 +18,11 @@ import { defineTool } from '@deepseek-ai/dsh-tools';
 import { extractPage } from "./html.js";
 import { extractTables } from "./table.js";
 import { extractMeta, MAX_JSON_LD_BLOCKS } from "./meta.js";
-import { assertHttpUrl, fetchFeed, fetchPage, resolveHref } from "./fetch.js";
+import { assertHttpUrl, fetchFeed, fetchPage, httpStatusOf, resolveHref } from "./fetch.js";
 import { parseFeed, truncateText } from "./feed.js";
 import { DEFAULT_MAX_SITEMAPS, DEFAULT_MAX_URLS, MAX_SITEMAP_DEPTH, MAX_SITEMAPS_LIMIT, MAX_URLS_LIMIT, isSitemapLike, parseRobots, parseSitemap, } from "./sitemap.js";
 import { probeUrl } from "./head.js";
+import { DEFAULT_MAX_RULES, MAX_RULES_LIMIT, evaluateRobots, productToken, } from "./robots.js";
 /** Fetch a page and extract its content; shared by both tools. */
 async function readPage(url, config, maxChars, format, extractLinks) {
     const fetched = await fetchPage(url, config);
@@ -183,6 +186,40 @@ function renderSitemap(value) {
     }
     if (result.truncated)
         lines.push('[output capped — raise maxUrls/maxSitemaps or target one sitemap directly]');
+    return lines.join('\n');
+}
+/** Compact text renderer for web_robots results. */
+function renderRobots(value) {
+    const result = value;
+    const lines = [];
+    lines.push(`robots.txt of ${result.robotsUrl} — ${result.robotsStatus === 0 ? 'unavailable' : `HTTP ${result.robotsStatus}`}, ${result.bytes} bytes`);
+    lines.push(`agent ${result.userAgent} (token "${result.productToken}") → ${result.target}`);
+    if (result.decision === 'rule' && result.rule !== undefined) {
+        lines.push(`${result.allowed ? 'allowed' : 'disallowed'} by ${result.rule.type} "${result.rule.pattern}" — ${result.rule.length} octets, line ${result.rule.line}`);
+    }
+    else if (result.decision === 'no-matching-rule') {
+        lines.push(`allowed — nothing matched (${result.ruleCount} rule(s) in the selected group, ${result.groupCount} group(s) in the file)`);
+    }
+    else if (result.decision === 'no-group') {
+        lines.push(`allowed — no group matches this agent (${result.groupCount} group(s) in the file)`);
+    }
+    else if (result.decision === 'no-robots') {
+        lines.push('allowed — no robots.txt to obey');
+    }
+    else {
+        lines.push('disallowed — robots.txt is unusable right now (see notes)');
+    }
+    if (result.matchedAgents.length > 0)
+        lines.push(`group: ${result.matchedKind} match on ${result.matchedAgents.join(', ')}`);
+    const extras = [];
+    if (result.crawlDelay !== undefined)
+        extras.push(`crawl-delay ${result.crawlDelay}`);
+    if (result.sitemaps.length > 0)
+        extras.push(`${result.sitemaps.length} sitemap(s)`);
+    if (extras.length > 0)
+        lines.push(`also published: ${extras.join(', ')}`);
+    for (const note of result.notes)
+        lines.push(`  note: ${note}`);
     return lines.join('\n');
 }
 /** Build the web tool definitions from the resolved config. */
@@ -799,6 +836,144 @@ export function buildWebfetchTools(config) {
             };
         },
     });
-    return { web_fetch, web_links, web_feed, web_headers, web_table, web_meta, web_sitemap };
+    const web_robots = defineTool({
+        name: 'web_robots',
+        description: 'Read a site\'s robots.txt and answer whether one path may be read by one user agent — the rules '
+            + 'engine behind web_sitemap\'s `Sitemap:` discovery. Give any page URL (its own path is checked) or a '
+            + 'robots.txt URL, plus an optional `path` and `userAgent`. Groups are picked by the most specific '
+            + 'user-agent match (`*` only as a fallback), rules match the encoded path + query with `*` and trailing `$` '
+            + 'wildcards, and the longest match wins with Allow winning ties (RFC 9309). The answer names the rule that '
+            + 'decided it; when no rule matched, the `rule` field is absent rather than naming a made-up pattern, and '
+            + '`allowed` is then true. A 4xx robots.txt means "no rules", a 5xx or unreadable one means "assume '
+            + 'disallowed" — both are reported as such instead of pretending the file was parsed. Read-only, sends no '
+            + 'credentials or cookies.',
+        parameters: {
+            url: { type: 'string', required: true, description: 'Full http/https URL: the page you want to read, or the robots.txt itself.' },
+            path: { type: 'string', description: 'Path (with optional ?query) to test instead of the URL\'s own path, e.g. "/blog/post-1" (1–2000 chars, a leading "/" is added when missing).' },
+            userAgent: { type: 'string', description: 'User agent to match groups against (default: this plugin\'s user agent). The product token before "/" and the version is what robots.txt groups are matched on.' },
+            maxRules: { type: 'number', description: `Max rules to list for the selected group (1–${MAX_RULES_LIMIT}, default ${DEFAULT_MAX_RULES}).` },
+        },
+        output: {
+            schema: {
+                type: 'object',
+                additionalProperties: false,
+                properties: {
+                    url: { type: 'string', required: true },
+                    robotsUrl: { type: 'string', required: true },
+                    robotsStatus: { type: 'number', required: true },
+                    bytes: { type: 'number', required: true },
+                    userAgent: { type: 'string', required: true },
+                    productToken: { type: 'string', required: true },
+                    target: { type: 'string', required: true },
+                    allowed: { type: 'boolean', required: true },
+                    decision: { type: 'string', required: true },
+                    matchedKind: { type: 'string', required: true },
+                    matchedAgents: { type: 'array', required: true, items: { type: 'string' } },
+                    groupCount: { type: 'number', required: true },
+                    ruleCount: { type: 'number', required: true },
+                    ignoredRules: { type: 'number', required: true },
+                    orphanRules: { type: 'number', required: true },
+                    crawlDelay: { type: 'string' },
+                    sitemaps: { type: 'array', required: true, items: { type: 'string' } },
+                    rules: {
+                        type: 'array',
+                        required: true,
+                        items: {
+                            type: 'object',
+                            additionalProperties: false,
+                            properties: {
+                                type: { type: 'string', required: true },
+                                pattern: { type: 'string', required: true },
+                                length: { type: 'number', required: true },
+                                line: { type: 'number', required: true },
+                            },
+                        },
+                    },
+                    rule: {
+                        type: 'object',
+                        additionalProperties: false,
+                        properties: {
+                            type: { type: 'string', required: true },
+                            pattern: { type: 'string', required: true },
+                            length: { type: 'number', required: true },
+                            line: { type: 'number', required: true },
+                        },
+                    },
+                    notes: { type: 'array', required: true, items: { type: 'string' } },
+                    truncated: { type: 'boolean', required: true },
+                },
+            },
+            render: (_args, value) => [{ type: 'text', text: renderRobots(value) }],
+        },
+        async execute(args) {
+            const start = new URL(assertHttpUrl(args.url));
+            const robotsUrl = start.pathname === '/robots.txt' ? start.toString() : `${start.origin}/robots.txt`;
+            const isRobotsInput = start.pathname === '/robots.txt';
+            const rawTarget = args.path === undefined ? (isRobotsInput ? '/' : `${start.pathname}${start.search}`) : args.path.trim();
+            const target = (rawTarget.startsWith('/') ? rawTarget : `/${rawTarget}`).slice(0, 2_000);
+            const userAgent = (args.userAgent ?? config.userAgent).slice(0, 200);
+            const base = {
+                url: args.url,
+                robotsUrl,
+                robotsStatus: 0,
+                bytes: 0,
+                userAgent,
+                productToken: productToken(userAgent),
+                target,
+                allowed: true,
+                decision: 'no-robots',
+                matchedKind: 'none',
+                matchedAgents: [],
+                groupCount: 0,
+                ruleCount: 0,
+                ignoredRules: 0,
+                orphanRules: 0,
+                sitemaps: [],
+                rules: [],
+                notes: [],
+                truncated: false,
+            };
+            let text = '';
+            try {
+                const page = await fetchFeed(robotsUrl, config);
+                base.robotsStatus = page.status;
+                text = page.body;
+                base.truncated = page.truncated;
+            }
+            catch (error) {
+                const status = httpStatusOf(error);
+                base.robotsStatus = status;
+                if (status >= 400 && status < 500) {
+                    base.notes.push(`robots.txt answered HTTP ${status} — RFC 9309 §2.3.1.3 treats 4xx as "no rules", so every path is allowed`);
+                    return base;
+                }
+                base.allowed = false;
+                base.decision = 'unavailable';
+                base.notes.push(status >= 500
+                    ? `robots.txt answered HTTP ${status} — RFC 9309 §2.3.1.4 says assume complete disallow until the file is reachable again`
+                    : `robots.txt could not be read (${error instanceof Error ? error.message : String(error)}) — treated as "assume disallowed"; retry before crawling`);
+                return base;
+            }
+            const evaluation = evaluateRobots(text, { userAgent, target, maxRules: args.maxRules });
+            return {
+                ...base,
+                bytes: evaluation.bytes,
+                allowed: evaluation.allowed,
+                decision: evaluation.decision,
+                matchedKind: evaluation.matchedKind,
+                matchedAgents: evaluation.matchedAgents,
+                groupCount: evaluation.groupCount,
+                ruleCount: evaluation.ruleCount,
+                ignoredRules: evaluation.ignoredRules,
+                orphanRules: evaluation.orphanRules,
+                ...(evaluation.crawlDelay === '' ? {} : { crawlDelay: evaluation.crawlDelay }),
+                sitemaps: evaluation.sitemaps,
+                rules: evaluation.rules,
+                ...(evaluation.rule === null ? {} : { rule: evaluation.rule }),
+                notes: evaluation.notes,
+            };
+        },
+    });
+    return { web_fetch, web_links, web_feed, web_headers, web_table, web_meta, web_sitemap, web_robots };
 }
 //# sourceMappingURL=tools.js.map

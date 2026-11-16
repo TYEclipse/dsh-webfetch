@@ -5,7 +5,7 @@
 
 A web page reader plugin for [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) (`dsh`).
 `dsh` agents can search, but until now they could not *read the page behind a URL*.
-`dsh-webfetch` closes that gap with seven read-only tools and **zero runtime dependencies** (Node built-ins + global `fetch` only).
+`dsh-webfetch` closes that gap with eight read-only tools and **zero runtime dependencies** (Node built-ins + global `fetch` only).
 
 ## Tools
 
@@ -214,12 +214,61 @@ agent: web_sitemap("https://example.com/blog")
       3. https://example.com/blog/
 ```
 
+### `web_robots`
+
+Answer the question a crawler asks first: **may this agent read this path?**
+`web_sitemap` only reads the `Sitemap:` lines of `robots.txt`; this tool reads
+the access rules themselves and evaluates them the way RFC 9309 defines:
+
+- groups are `User-agent:` lines followed by `Allow:` / `Disallow:` lines
+  (a `User-agent:` line after rules starts a new group; `Sitemap:` and
+  `Crawl-delay:` are global);
+- a group matches when its agent value is a case-insensitive prefix of our
+  product token, the **most specific match wins**, and `*` is only used when
+  nothing specific matches;
+- rules match the encoded path + query from the start of the string, `*`
+  matches any sequence, a trailing `$` anchors the end;
+- the **longest** matching rule wins, and `Allow` wins a tie.
+
+| Parameter   | Type              | Default        | Description                                                    |
+| ----------- | ----------------- | -------------- | -------------------------------------------------------------- |
+| `url`       | string (required) | —              | Full http/https URL: the page to read, or a `robots.txt`.      |
+| `path`      | string            | the URL's path | Path (with optional `?query`) to test, e.g. `/blog/post-1`.     |
+| `userAgent` | string            | plugin UA      | Agent to match groups against (the product token is matched).   |
+| `maxRules`  | number            | `50`           | Rules listed for the selected group (1–200).                   |
+
+Returns `{ url, robotsUrl, robotsStatus, bytes, userAgent, productToken, target,
+allowed, decision, matchedKind, matchedAgents, groupCount, ruleCount,
+ignoredRules, orphanRules, crawlDelay?, sitemaps, rules, rule?, notes,
+truncated }`. The honest parts are the point:
+
+- `decision` says **how** the answer was reached: `rule` (a real rule decided
+  it), `no-matching-rule` (the group has rules, none fit — allowed by default),
+  `no-group` (no group for this agent and no `*` group), `no-robots` (4xx: there
+  is no file, so no rules apply) or `unavailable` (5xx or unreadable: RFC 9309
+  says assume complete disallow, and `allowed` is then `false`).
+- `rule` is **absent** when no rule matched — not a made-up pattern — and
+  `crawlDelay` is absent when the file does not publish one.
+- `notes` explains the surprises: a bare pattern like `Disallow: admin` can
+  never match a path, empty `Allow`/`Disallow` lines match nothing, rules
+  before any `User-agent` are ignored, a `Crawl-delay` is advisory only (RFC
+  9309 defines no delay directive), and a file over 512 KiB may be cut.
+
+```text
+user: is it OK to read example.com/no-webfetch/x?
+agent: web_robots("https://example.com/no-webfetch/x")
+  → robots.txt of https://example.com/robots.txt — HTTP 200, 326 bytes
+    agent dsh-webfetch/0.7 (DeepSeek Harness plugin) (token "dsh-webfetch") → /no-webfetch/x
+    disallowed by disallow "/no-webfetch" — 12 octets, line 8
+    group: specific match on dsh-webfetch
+```
+
 ## Install
 
 ```sh
 dsh plugin --profile web add github:TYEclipse/dsh-webfetch
 # or a pinned release:
-dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.6.0
+dsh plugin --profile web add github:TYEclipse/dsh-webfetch#v0.7.0
 ```
 
 Restart your agent session and the tools are available to the model.
@@ -235,7 +284,7 @@ plugins:
     maxBytes: 1500000       # response size cap in bytes (10000–5000000)
     maxChars: 50000         # extracted content cap in chars (1000–200000)
     maxRedirects: 3         # redirect hops to follow (0–10)
-    userAgent: "dsh-webfetch/0.6 (DeepSeek Harness plugin)"
+    userAgent: "dsh-webfetch/0.7 (DeepSeek Harness plugin)"
 ```
 
 ## Proxy support
@@ -272,8 +321,9 @@ Proxy credentials embedded in the proxy URL are sent as
 - **Content-type gated** — `web_fetch`/`web_links` parse only `text/html` and
   `text/plain`; `web_feed` and `web_sitemap` additionally accept
   `application/rss+xml`, `application/atom+xml`, `application/xml` and
-  `text/xml` (a `robots.txt` is `text/plain`). Scripts, styles, comments and
-  embedded content are stripped by the extractor/parser.
+  `text/xml` (a `robots.txt` is `text/plain`, which is what `web_robots`
+  reads). Scripts, styles, comments and embedded content are stripped by the
+  extractor/parser.
 - **Charset-aware** — honours the `Content-Type` charset, falls back to XML
   declaration / `<meta charset>` sniffing, then UTF-8.
 

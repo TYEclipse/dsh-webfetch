@@ -47,6 +47,9 @@ MAX_JSON_LD_CHARS = 100_000   # src/meta.ts  — per-block parse cap
 MAX_JSON_LD_TYPES = 8         # src/meta.ts  — @type names kept per block
 MAX_CHARS_FIXTURE = 100       # test/html.test.ts — maxChars fixture
 FEED_MAX_ITEMS_FIXTURE = 2    # test/tools.test.ts — maxItems fixture
+DEFAULT_ROBOTS_MAX_RULES = 50       # src/robots.ts — DEFAULT_MAX_RULES
+ROBOTS_MAX_RULES_LIMIT = 200        # src/robots.ts — MAX_RULES_LIMIT
+ROBOTS_FILE_SIZE_LIMIT = 512_000    # src/robots.ts — ROBOTS_SIZE_LIMIT (RFC 9309 §2.5)
 WEB_FETCH_MAX_CHARS_DEFAULT = 50_000   # src/index.ts — Config default
 WEB_FETCH_TIMEOUT_DEFAULT = 10_000     # src/index.ts
 WEB_FETCH_MAX_BYTES_DEFAULT = 1_500_000
@@ -527,6 +530,165 @@ def derive_expectations(html: str):
 
 
 # --------------------------------------------------------------------------
+# §3c robots.txt rule engine oracle (RFC 9309) — independent implementation
+# --------------------------------------------------------------------------
+# The TypeScript side matches patterns by splitting on "*" and walking the
+# parts; this oracle compiles the same pattern into a regular expression
+# (escape everything, then "*" -> ".*"). Two different algorithms agreeing is
+# what makes the expectation trustworthy — the same reasoning as the metadata
+# parser-vs-regex cross-check above.
+
+ROBOTS_RULES_FIXTURE = """# rule fixture
+User-agent: *
+Disallow: /private
+Allow: /private/public
+Crawl-delay: 10
+
+User-agent: dsh-webfetch
+Disallow: /no-webfetch
+Allow: /no-webfetch/allowed
+
+User-agent: dsh-webfetch
+Disallow: /*.pdf$
+
+User-agent: googlebot
+Disallow:
+
+Sitemap: https://example.test/sitemap.xml
+Sitemap: https://example.test/sitemap.xml
+"""
+
+ROBOTS_TIE_FIXTURE = """User-agent: *
+Disallow: /tie
+Allow: /tie
+Disallow: /deeper
+Allow: /deeper/ok
+"""
+
+ROBOTS_NO_GROUP_FIXTURE = """User-agent: googlebot
+Disallow: /
+"""
+
+ROBOTS_ODD_FIXTURE = """Disallow: /orphan
+User-agent: *
+Disallow: admin
+Disallow: /заметки
+"""
+
+ROBOTS_UA = "dsh-webfetch/0.7 (DeepSeek Harness plugin)"
+ROBOTS_OTHER_UA = "otherbot/1.0"
+
+
+def robots_octets(value):
+    return len(value.encode("utf-8"))
+
+
+def robots_token(user_agent):
+    first = re.split(r"[\s()]", user_agent.strip())[0]
+    return first.split("/")[0].lower()
+
+
+def robots_parse(text):
+    groups, sitemaps = [], []
+    crawl_delay, current = "", None
+    orphan, ignored, line_no = 0, 0, 0
+    for raw in text.replace("\ufeff", "").splitlines():
+        line_no += 1
+        line = raw.split("#")[0].strip()
+        if not line or ":" not in line:
+            continue
+        key, _, value = line.partition(":")
+        key, value = key.strip().lower(), " ".join(value.split()).strip()
+        if key == "user-agent":
+            if not value:
+                continue
+            if current is None or current["rules"]:
+                current = {"agents": [], "rules": []}
+                groups.append(current)
+            current["agents"].append(value)
+        elif key in ("allow", "disallow"):
+            if current is None:
+                orphan += 1
+            elif not value:
+                ignored += 1
+            else:
+                current["rules"].append({"type": key, "pattern": value,
+                                         "length": robots_octets(value), "line": line_no})
+        elif key == "sitemap" and value and value not in sitemaps:
+            sitemaps.append(value)
+        elif key == "crawl-delay" and not crawl_delay:
+            crawl_delay = value[:20]
+    return {"groups": groups, "sitemaps": sitemaps, "crawlDelay": crawl_delay,
+            "orphanRules": orphan, "ignoredRules": ignored}
+
+
+def robots_match(pattern, target):
+    """Independent matcher: compile the pattern to a regex (re.match is
+    anchored at the start; a trailing "$" anchors the end)."""
+    anchored = pattern.endswith("$")
+    body = pattern[:-1] if anchored else pattern
+    rx = ".*".join(re.escape(part) for part in body.split("*"))
+    return re.match(rx + ("$" if anchored else ""), target) is not None
+
+
+def robots_select(parsed, token):
+    def score(group):
+        best = -1
+        for agent in group["agents"]:
+            if agent == "*":
+                continue
+            lowered = agent.lower()
+            if token.startswith(lowered):
+                best = max(best, robots_octets(lowered))
+        return best
+
+    scored = [(group, score(group)) for group in parsed["groups"]]
+    specific = [(group, value) for group, value in scored if value >= 0]
+    if specific:
+        best = max(value for _, value in specific)
+        winners = [group for group, value in specific if value == best]
+        agents, rules = [], []
+        for group in winners:
+            for agent in group["agents"]:
+                if agent != "*" and agent not in agents:
+                    agents.append(agent)
+            rules.extend(group["rules"])
+        return {"kind": "specific", "matchedAgents": agents, "rules": rules}
+    wildcard = [group for group, _ in scored if "*" in group["agents"]]
+    if wildcard:
+        agents, rules = ["*"], []
+        for group in wildcard:
+            for agent in group["agents"]:
+                if agent != "*" and agent not in agents:
+                    agents.append(agent)
+            rules.extend(group["rules"])
+        return {"kind": "wildcard", "matchedAgents": agents, "rules": rules}
+    return {"kind": "none", "matchedAgents": [], "rules": []}
+
+
+def robots_evaluate(text, user_agent, target):
+    parsed = robots_parse(text)
+    selection = robots_select(parsed, robots_token(user_agent))
+    matching = [rule for rule in selection["rules"] if robots_match(rule["pattern"], target)]
+    # Longest pattern wins; ties go to Allow (RFC 9309 §2.2.2).
+    matching.sort(key=lambda rule: (-rule["length"], 0 if rule["type"] == "allow" else 1, rule["line"]))
+    winner = matching[0] if matching else None
+    if winner is not None:
+        decision = "rule"
+    elif selection["kind"] == "none":
+        decision = "no-group"
+    else:
+        decision = "no-matching-rule"
+    return {"allowed": True if winner is None else winner["type"] == "allow",
+            "decision": decision, "rule": winner,
+            "matchedKind": selection["kind"], "matchedAgents": selection["matchedAgents"],
+            "ruleCount": len(selection["rules"]), "groupCount": len(parsed["groups"]),
+            "ignoredRules": parsed["ignoredRules"], "orphanRules": parsed["orphanRules"],
+            "crawlDelay": parsed["crawlDelay"], "sitemaps": parsed["sitemaps"],
+            "bytes": robots_octets(text)}
+
+
+# --------------------------------------------------------------------------
 # §4 printable anchors
 # --------------------------------------------------------------------------
 
@@ -616,6 +778,62 @@ def print_anchors():
           f"nested index depth {MAX_SITEMAP_DEPTH}")
     print(f"    per-value caps: loc {MAX_LOC_CHARS}, lastmod {MAX_LASTMOD_CHARS}, "
           f"changefreq {MAX_CHANGEFREQ_CHARS}")
+
+    print("\n[8] robots.txt rule engine (test/robots.test.ts fixtures)")
+    print(f"    user agent {ROBOTS_UA!r} -> token {robots_token(ROBOTS_UA)!r}")
+    print(f"    other agent {ROBOTS_OTHER_UA!r} -> token {robots_token(ROBOTS_OTHER_UA)!r}")
+    rules_parsed = robots_parse(ROBOTS_RULES_FIXTURE)
+    print(f"    rules fixture: groups={len(rules_parsed['groups'])} ignoredRules={rules_parsed['ignoredRules']} "
+          f"orphanRules={rules_parsed['orphanRules']} crawlDelay={rules_parsed['crawlDelay']!r} "
+          f"sitemaps={len(rules_parsed['sitemaps'])} bytes={robots_octets(ROBOTS_RULES_FIXTURE)}")
+    for index, group in enumerate(rules_parsed["groups"]):
+        rendered = ", ".join(f"{rule['type']}:{rule['pattern']}({rule['length']}B,line {rule['line']})"
+                             for rule in group["rules"]) or "(no rules)"
+        print(f"      group {index}: agents={group['agents']} {rendered}")
+    rules_cases = [
+        ("UA /no-webfetch/x", ROBOTS_UA, "/no-webfetch/x"),
+        ("UA /no-webfetch/allowed/x", ROBOTS_UA, "/no-webfetch/allowed/x"),
+        ("UA /docs/report.pdf", ROBOTS_UA, "/docs/report.pdf"),
+        ("UA /docs/report.pdf?x=1", ROBOTS_UA, "/docs/report.pdf?x=1"),
+        ("UA /private/page (wildcard group is not consulted)", ROBOTS_UA, "/private/page"),
+        ("other /private/page", ROBOTS_OTHER_UA, "/private/page"),
+        ("other /private/public/x", ROBOTS_OTHER_UA, "/private/public/x"),
+        ("googlebot /x (empty group)", "googlebot/2.1", "/x"),
+        ("googlebot /no-webfetch/x (other agent's rules ignored)", "googlebot/2.1", "/no-webfetch/x"),
+    ]
+    for label, agent, target in rules_cases:
+        result = robots_evaluate(ROBOTS_RULES_FIXTURE, agent, target)
+        rule = result["rule"]
+        rendered = ("none" if rule is None else
+                    f"{rule['type']} {rule['pattern']} len={rule['length']} line={rule['line']}")
+        print(f"    {label}: allowed={result['allowed']} decision={result['decision']} rule={rendered} "
+              f"matched={result['matchedKind']}:{result['matchedAgents']} groupRules={result['ruleCount']}")
+    tie = robots_evaluate(ROBOTS_TIE_FIXTURE, ROBOTS_OTHER_UA, "/tie")
+    deeper = robots_evaluate(ROBOTS_TIE_FIXTURE, ROBOTS_OTHER_UA, "/deeper/x")
+    print(f"    tie fixture /tie: allowed={tie['allowed']} rule={tie['rule']['type']} "
+          f"len={tie['rule']['length']} (Allow wins the tie)")
+    print(f"    tie fixture /deeper/x: allowed={deeper['allowed']} rule={deeper['rule']['type']} "
+          f"len={deeper['rule']['length']}")
+    no_group = robots_evaluate(ROBOTS_NO_GROUP_FIXTURE, ROBOTS_UA, "/")
+    print(f"    no-group fixture: allowed={no_group['allowed']} decision={no_group['decision']} "
+          f"matched={no_group['matchedKind']}:{no_group['matchedAgents']} groupRules={no_group['ruleCount']}")
+    odd_parsed = robots_parse(ROBOTS_ODD_FIXTURE)
+    odd = robots_evaluate(ROBOTS_ODD_FIXTURE, ROBOTS_OTHER_UA, "/admin")
+    odd_cyrillic = robots_evaluate(ROBOTS_ODD_FIXTURE, ROBOTS_OTHER_UA, "/заметки/x")
+    print(f"    odd fixture: orphanRules={odd_parsed['orphanRules']} rule lengths="
+          f"{[rule['length'] for rule in odd_parsed['groups'][0]['rules']]}")
+    print(f"    odd fixture /admin: allowed={odd['allowed']} decision={odd['decision']} (a bare \"admin\" pattern cannot match \"/admin\")")
+    print(f"    odd fixture /заметки/x: allowed={odd_cyrillic['allowed']} len={odd_cyrillic['rule']['length']} "
+          f"(UTF-8 octets, not characters)")
+    empty = robots_evaluate("", ROBOTS_UA, "/")
+    print(f"    empty document: allowed={empty['allowed']} decision={empty['decision']} bytes={empty['bytes']}")
+    print("    matcher table: '/private' vs '/private/x' True, vs '/x/private' False; "
+          "'/*.pdf$' vs '/a.pdf' True, vs '/a.pdf?q=1' False; '/a*b$' vs '/aXb' True, vs '/aXb/' False; "
+          "'/' vs '/anything' True; '/x$' vs '/x' True, vs '/x/' False")
+    print(f"    documented bounds: maxRules default {DEFAULT_ROBOTS_MAX_RULES} / limit {ROBOTS_MAX_RULES_LIMIT}; "
+          f"file size limit {ROBOTS_FILE_SIZE_LIMIT} bytes (RFC 9309 §2.5)")
+    print("    tool end-to-end statuses: 200 -> parsed rules; 404 -> decision no-robots (allowed); "
+          "503 -> decision unavailable (assume disallowed)")
 
 
 # --------------------------------------------------------------------------
@@ -712,6 +930,79 @@ def check():
     expect("documented maxUrls limit", MAX_URLS_LIMIT, 1000)
     expect("documented maxSitemaps default", DEFAULT_MAX_SITEMAPS, 5)
     expect("documented maxSitemaps limit", MAX_SITEMAPS_LIMIT, 20)
+
+    # (f) robots.txt rule engine: RFC 9309 semantics used as rulers, plus a
+    # pattern-matcher table derived from the definitions (not from the code).
+    expect("robots token of our UA", robots_token(ROBOTS_UA), "dsh-webfetch")
+    expect("robots token of another UA", robots_token(ROBOTS_OTHER_UA), "otherbot")
+    matcher_table = [
+        ("/private", "/private/x", True),
+        ("/private", "/x/private", False),
+        ("/*.pdf$", "/a/report.pdf", True),
+        ("/*.pdf$", "/a/report.pdf?q=1", False),
+        ("/a*b$", "/aXb", True),
+        ("/a*b$", "/aXb/", False),
+        ("/", "/anything", True),
+        ("/", "", False),
+        ("/x$", "/x", True),
+        ("/x$", "/x/", False),
+        ("*", "/whatever", True),
+        ("/a$b", "/a$b/x", True),
+    ]
+    for pattern, target, want in matcher_table:
+        expect(f"matcher {pattern!r} vs {target!r}", robots_match(pattern, target), want)
+    parsed_rules = robots_parse(ROBOTS_RULES_FIXTURE)
+    expect("rules fixture group count", len(parsed_rules["groups"]), 4)
+    expect("rules fixture empty Disallow ignored", parsed_rules["ignoredRules"], 1)
+    expect("rules fixture orphan rules", parsed_rules["orphanRules"], 0)
+    expect("rules fixture crawl delay", parsed_rules["crawlDelay"], "10")
+    expect("rules fixture sitemaps deduplicated", len(parsed_rules["sitemaps"]), 1)
+    for group in parsed_rules["groups"]:
+        for rule in group["rules"]:
+            expect(f"pattern length in octets {rule['pattern']!r}",
+                   rule["length"], len(rule["pattern"].encode("utf-8")))
+    # A specific group is used instead of `*` (RFC 9309 §2.2.1).
+    specific = robots_evaluate(ROBOTS_RULES_FIXTURE, ROBOTS_UA, "/private/disallowed-in-star")
+    expect("specific group beats the wildcard group", specific["decision"], "no-matching-rule")
+    wildcard = robots_evaluate(ROBOTS_RULES_FIXTURE, ROBOTS_OTHER_UA, "/private/page")
+    expect("wildcard group applies when nothing is specific", wildcard["matchedKind"], "wildcard")
+    expect("wildcard group disallows /private", wildcard["allowed"], False)
+    # Longest match wins, Allow wins the tie (§2.2.2).
+    expect("longer Allow beats shorter Disallow",
+           robots_evaluate(ROBOTS_RULES_FIXTURE, ROBOTS_OTHER_UA, "/private/public/x")["allowed"], True)
+    expect("longer Disallow beats shorter Allow",
+           robots_evaluate(ROBOTS_TIE_FIXTURE, ROBOTS_OTHER_UA, "/deeper/x")["allowed"], False)
+    tie = robots_evaluate(ROBOTS_TIE_FIXTURE, ROBOTS_OTHER_UA, "/tie")
+    expect("equal-length tie goes to Allow", (tie["allowed"], tie["rule"]["type"]), (True, "allow"))
+    expect("tie winner length equals the pattern length", tie["rule"]["length"], robots_octets("/tie"))
+    # `$` anchors the end, so a query string is a different path.
+    expect("anchored pattern does not match a query variant",
+           robots_evaluate(ROBOTS_RULES_FIXTURE, ROBOTS_UA, "/docs/report.pdf?x=1")["decision"],
+           "no-matching-rule")
+    expect("anchored pattern matches the plain path",
+           robots_evaluate(ROBOTS_RULES_FIXTURE, ROBOTS_UA, "/docs/report.pdf")["allowed"], False)
+    # No group at all: everything allowed, and it says why.
+    no_group = robots_evaluate(ROBOTS_NO_GROUP_FIXTURE, ROBOTS_UA, "/")
+    expect("no matching group allows", (no_group["allowed"], no_group["decision"]), (True, "no-group"))
+    expect("no matching group reports the wildcard absence", no_group["matchedKind"], "none")
+    # Groups never borrow rules across user agents.
+    expect("another agent's rules do not leak",
+           robots_evaluate(ROBOTS_RULES_FIXTURE, "googlebot/2.1", "/no-webfetch/x")["decision"],
+           "no-matching-rule")
+    # A bare pattern without a leading slash can never match a path.
+    expect("orphan rule line ignored",
+           robots_parse(ROBOTS_ODD_FIXTURE)["orphanRules"], 1)
+    expect("bare pattern cannot match a path",
+           robots_evaluate(ROBOTS_ODD_FIXTURE, ROBOTS_OTHER_UA, "/admin")["decision"], "no-matching-rule")
+    expect("non-ASCII pattern length is octets",
+           robots_evaluate(ROBOTS_ODD_FIXTURE, ROBOTS_OTHER_UA, "/заметки/x")["rule"]["length"],
+           robots_octets("/заметки"))
+    expect("octets of a 7-letter Cyrillic segment", robots_octets("/заметки"), 15)
+    empty = robots_evaluate("", ROBOTS_UA, "/")
+    expect("empty robots.txt allows everything", (empty["allowed"], empty["decision"], empty["bytes"]),
+           (True, "no-group", 0))
+    expect("documented robots bounds",
+           (DEFAULT_ROBOTS_MAX_RULES, ROBOTS_MAX_RULES_LIMIT, ROBOTS_FILE_SIZE_LIMIT), (50, 200, 512000))
 
     if failures:
         print("oracle self-check FAILED:")

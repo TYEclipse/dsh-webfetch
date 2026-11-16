@@ -2,6 +2,10 @@
 
 > 版本口径：patch 修 bug/补测试｜minor 新增用户可见功能｜major 破坏性变更。安装：`dsh plugin --profile web add github:TYEclipse/dsh-webfetch`
 
+## [0.7.0] — 2026-11-17
+### Minor · R102
+- [自主进化] R102 新增 web_robots：RFC 9309 robots.txt 规则判定（组选择 / * 与 $ 通配 / 最长匹配 + Allow 胜平局 / 4xx 无规则、5xx 视为禁止）
+
 ## [0.6.0] — 2026-10-28
 ### Minor · R82
 - [自主进化] R82 新增 web_sitemap——从 robots.txt 的 Sitemap 指令枚举整站 URL（跟随 sitemap 索引、lastmod/changefreq/priority、相对地址解析、重复折叠；失败与 gzip 带因列出不中断），oracle 扩 sitemap 区（ElementTree 与正则双读对拍）

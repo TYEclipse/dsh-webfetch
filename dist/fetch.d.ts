@@ -43,6 +43,8 @@ export interface FetchedPage {
 export declare function fetchPage(input: string, config: FetchConfig): Promise<FetchedPage>;
 /** Fetch a syndication feed document (RSS/Atom/XML; HTML pages allowed too). */
 export declare function fetchFeed(input: string, config: FetchConfig): Promise<FetchedPage>;
+/** HTTP status carried by an error thrown from the HTTP layer (0 = unknown). */
+export declare function httpStatusOf(error: unknown): number;
 /** Resolve a possibly-relative href against a base page URL. */
 export declare function resolveHref(href: string, baseUrl: string): string;
 //# sourceMappingURL=fetch.d.ts.map

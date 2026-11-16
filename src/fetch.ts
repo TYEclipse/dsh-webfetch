@@ -140,7 +140,10 @@ async function fetchDocument(input: string, config: FetchConfig, allowed: Readon
 
     if (status < 200 || status >= 300) {
       await response.body?.cancel().catch(() => {})
-      throw new Error(`HTTP ${status} ${response.statusText} for ${current}`)
+      // The status travels with the error: robots.txt means different things
+      // for 4xx (no rules) and 5xx (assume disallowed), so callers must not
+      // have to parse the message to tell them apart.
+      throw Object.assign(new Error(`HTTP ${status} ${response.statusText} for ${current}`), { status })
     }
 
     const contentType = (response.headers.get('content-type') ?? 'unknown').split(';')[0]?.trim().toLowerCase() ?? 'unknown'
@@ -200,6 +203,12 @@ export async function fetchPage(input: string, config: FetchConfig): Promise<Fet
 /** Fetch a syndication feed document (RSS/Atom/XML; HTML pages allowed too). */
 export async function fetchFeed(input: string, config: FetchConfig): Promise<FetchedPage> {
   return fetchDocument(input, config, FEED_TYPES, 'expected an HTML/plain-text page or an RSS/Atom/XML feed')
+}
+
+/** HTTP status carried by an error thrown from the HTTP layer (0 = unknown). */
+export function httpStatusOf(error: unknown): number {
+  const status = (error as { status?: unknown } | null)?.status
+  return typeof status === 'number' && Number.isFinite(status) ? status : 0
 }
 
 /** Resolve a possibly-relative href against a base page URL. */
