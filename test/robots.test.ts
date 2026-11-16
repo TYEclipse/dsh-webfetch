@@ -248,7 +248,9 @@ describe('evaluateRobots', () => {
     const result = evaluateRobots(ROBOTS_ODD, { userAgent: OTHER_UA, target: '/admin' })
     expect(result.allowed).toBe(true)
     expect(result.orphanRules).toBe(1)
-    expect(result.notes.some((note) => note.includes('do not start with "/" or "*"'))).toBe(true)
+    const note = result.notes.find((entry) => entry.includes('do not start with')) ?? ''
+    expect(note).toContain('"admin"')
+    expect(note).not.toContain('/admin')
     expect(evaluateRobots(ROBOTS_ODD, { userAgent: OTHER_UA, target: '/заметки/x' }).rule).toMatchObject({ length: 15 })
   })
 

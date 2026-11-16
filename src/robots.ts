@@ -312,8 +312,8 @@ export function evaluateRobots(text: string, options: EvaluateOptions): RobotsEv
 
   const oddPatterns = selection.rules.filter((rule) => rule.pattern.startsWith('/') === false && rule.pattern.startsWith('*') === false)
   if (oddPatterns.length > 0) {
-    const example = oddPatterns[0]
-    notes.push(`${oddPatterns.length} rule pattern(s) do not start with "/" or "*" (e.g. "${example?.pattern ?? ''}") — patterns match the path from its first character, so path "admin" can never match "/admin"`)
+    const example = oddPatterns[0]?.pattern ?? ''
+    notes.push(`${oddPatterns.length} rule pattern(s) do not start with "/" or "*" (e.g. "${example}") — rules match the path from its first character, so a pattern without a leading "/" can never match one`)
   }
   if (parsed.ignoredRules > 0) {
     notes.push(`${parsed.ignoredRules} empty Allow/Disallow line(s) ignored — an empty pattern matches nothing`)

@@ -1,6 +1,6 @@
 {
   "name": "dsh-webfetch",
-  "version": "0.7.0",
+  "version": "0.7.1",
   "description": "Web page reader for DeepSeek Harness (dsh): fetch any URL and extract clean markdown or plain text, inventory links, read RSS/Atom feeds, inspect HTTP headers without the body, extract HTML tables as structured rows, read a page's own metadata (canonical, Open Graph, hreflang, feed autodiscovery, JSON-LD), list a site's URLs from robots.txt + sitemap.xml (sitemap indexes followed) and answer robots.txt access rules per RFC 9309 (which user-agent group applies, which rule decides, what happens when the file is missing or broken) — zero runtime dependencies",
   "type": "module",
   "main": "dist/index.js",

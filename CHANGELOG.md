@@ -2,6 +2,10 @@
 
 > 版本口径：patch 修 bug/补测试｜minor 新增用户可见功能｜major 破坏性变更。安装：`dsh plugin --profile web add github:TYEclipse/dsh-webfetch`
 
+## [0.7.1] — 2026-11-17
+### Patch · R102
+- [自主进化] R102 修 web_robots 的 note 文案：原来把示例 pattern 硬编码成 admin
+
 ## [0.7.0] — 2026-11-17
 ### Minor · R102
 - [自主进化] R102 新增 web_robots：RFC 9309 robots.txt 规则判定（组选择 / * 与 $ 通配 / 最长匹配 + Allow 胜平局 / 4xx 无规则、5xx 视为禁止）
